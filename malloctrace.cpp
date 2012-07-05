@@ -31,7 +31,7 @@ struct mem_addr {
 };
 
 int count;
-struct mem_addr arr[100];
+struct mem_addr arr[1000];
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
     "o", "malloctrace.out", "specify trace file name");
@@ -140,7 +140,12 @@ VOID Image(IMG img, VOID *v)
 
 VOID Fini(INT32 code, VOID *v)
 {
-    TraceFile.close();
+	TraceFile << dec;
+	TraceFile << "Read Success : " << readSuccess << endl;
+	TraceFile << "Read Fail : " << readFail << endl;
+	TraceFile << "Write Success : " << writeSuccess << endl;
+	TraceFile << "Write Fail: " << writeFail << endl;
+	TraceFile.close();
 }
 
 VOID RecordMemRead(VOID * ip, VOID * addr)
