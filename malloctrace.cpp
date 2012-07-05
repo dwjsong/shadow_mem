@@ -22,6 +22,8 @@ std::ofstream TraceFile;
 int malloc_size;
 const unsigned long virtMemUpper = 1024 * 1024 * 32;//(1ULL << 44);
 typedef VOID * ( *FP_MALLOC )( size_t );
+int readSuccess, readFail;
+int writeSuccess, writeFail;
 
 struct mem_addr {
 	int *addr;
@@ -146,7 +148,9 @@ VOID RecordMemRead(VOID * ip, VOID * addr)
 	for (int i = 0; i < count; i++) {
 		if (arr[i].addr <= addr && addr < arr[i].addr + arr[i].size) {
 			TraceFile << "R " << arr[i].addr << " " << addr << endl;
+			readSuccess++;
 		}
+		else readFail++;
 	}
 }
 
@@ -155,7 +159,9 @@ VOID RecordMemWrite(VOID * ip, VOID * addr)
 	for (int i = 0; i < count; i++) {
 		if (arr[i].addr <= addr && addr < arr[i].addr + arr[i].size) {
 			TraceFile << "W " << arr[i].addr << " " << addr << endl;
+			writeSuccess++;
 		}
+		else writeFail++;
 	}
 }
 
