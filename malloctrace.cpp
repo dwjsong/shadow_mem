@@ -69,7 +69,6 @@ void freeShadowMemory()
 
 int markMalloc(int *addr, int size)
 {
-//	TraceFile << "Malloc " << addr << " " << size << "\n";
 	arr[count].addr = addr;
 	arr[count].size = size;
 	count++;
@@ -94,19 +93,20 @@ VOID Arg1Before(CHAR * name, ADDRINT size)
 	malloc_size = size;
 }
 
+// erase address when free
 VOID BeforeFree(CHAR * name, ADDRINT addr)
 {
 	unmarkMalloc((int *)addr);
 }
 
-
 // write return address
 VOID MallocAfter(ADDRINT ret)
 {
-//    TraceFile << malloc_size << "  returns " << ret << endl;
 	markMalloc((int *)ret, malloc_size);
 }
 
+// insert code before & after malloc
+// insert code after free
 VOID Image(IMG img, VOID *v)
 {
     RTN mallocRtn = RTN_FindByName(img, MALLOC);
@@ -123,18 +123,6 @@ VOID Image(IMG img, VOID *v)
 
         RTN_Close(mallocRtn);
     }
-    /*
-
-    RTN mmapRtn = RTN_FindByName(img, MMAP);
-    {
-        RTN_Open(mmapRtn);
-
-        RTN_InsertCall(mmapRtn, IPOINT_AFTER, (AFUNPTR)MallocAfter,
-                       IARG_FUNCRET_EXITPOINT_VALUE, IARG_END);
-
-        RTN_Close(mmapRtn);
-    }
-    */
 
     RTN freeRtn = RTN_FindByName(img, FREE);
     if (RTN_Valid(freeRtn))
@@ -171,6 +159,7 @@ VOID RecordMemWrite(VOID * ip, VOID * addr)
 	}
 }
 
+// check memory read & write
 VOID Instruction(INS ins, VOID *v)
 {
 	UINT32 memOperands = INS_MemoryOperandCount(ins);
@@ -193,6 +182,7 @@ VOID Instruction(INS ins, VOID *v)
 	}
 }
 
+// custom malloc to allocate memory address at 4GB (after shadow memory)
 VOID *newMalloc( FP_MALLOC orgFuncptr, UINT32 arg0, ADDRINT returnIp )
 //inline void *newMalloc(size_t size)
 {
@@ -210,6 +200,7 @@ VOID *newMalloc( FP_MALLOC orgFuncptr, UINT32 arg0, ADDRINT returnIp )
 	return v;
 }
 
+// if malloc is called run custom malloc
 VOID ImageLoad(IMG img, VOID *v)
 {
 	RTN rtn = RTN_FindByName(img, "malloc");
@@ -241,16 +232,19 @@ int main(int argc, char *argv[])
     
     TraceFile << hex;
     TraceFile.setf(ios::showbase);
-    
+   
+    // Trace memory read & write
     INS_AddInstrumentFunction(Instruction, 0);
 //    IMG_AddInstrumentFunction(ImageLoad, 0);
+
+    // insert code before and after malloc 
+    // insert code before free
     IMG_AddInstrumentFunction(Image, 0);
     PIN_AddFiniFunction(Fini, 0);
 
     PIN_StartProgram();
 //    PIN_StartProgramProbed();
     
-    TraceFile << "HAHAHAHA\n";
     freeShadowMemory();
     return 0;
 }
