@@ -5,6 +5,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <map>
+#include <pthread.h>
+#include <set>
       
 void *shadow_addr;
 
@@ -18,12 +21,15 @@ void *shadow_addr;
 	int x86 = 64;
 #endif
 
+pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+
 std::ofstream TraceFile;
 int malloc_size;
 const unsigned long virtMemUpper = 1024 * 1024 * 32;//(1ULL << 44);
 typedef VOID * ( *FP_MALLOC )( size_t );
 int readSuccess, readFail;
 int writeSuccess, writeFail;
+set<char *> mem_set;
 
 struct mem_addr {
 	int *addr;
@@ -69,22 +75,30 @@ void freeShadowMemory()
 	}
 }
 
-int markMalloc(int *addr, int size)
+int markMalloc(char *addr, int size)
 {
-	arr[count].addr = addr;
-	arr[count].size = size;
-	count++;
+	char *new_addr;
+
+//	pthread_rwlock_wrlock(&rwlock);
+
+	for (char i = 0; i < size; i++) {
+		new_addr = (addr + i);
+		if (!mem_set.count(new_addr)) {
+			mem_set.insert(new_addr);
+		}
+//		TraceFile << (short*)new_addr << endl;
+	}
+//	pthread_rwlock_unlock(&rwlock);
 
 	return 0;
 }
 
-int unmarkMalloc(int *addr)
+int unmarkMalloc(char *addr)
 {
-	for (int i = 0; i < count; i++)
-		if (arr[i].addr == addr) {
-			arr[i] = arr[--count];
-			return 0;
-		}
+//	pthread_rwlock_wrlock(&rwlock);
+	mem_set.erase(addr);
+//	pthread_rwlock_unlock(&rwlock);	
+
 	return -1;
 }
 
@@ -98,13 +112,13 @@ VOID Arg1Before(CHAR * name, ADDRINT size)
 // erase address when free
 VOID BeforeFree(CHAR * name, ADDRINT addr)
 {
-	unmarkMalloc((int *)addr);
+	unmarkMalloc((char *)addr);
 }
 
 // write return address
 VOID MallocAfter(ADDRINT ret)
 {
-	markMalloc((int *)ret, malloc_size);
+	markMalloc((char *)ret, malloc_size);
 }
 
 // insert code before & after malloc
@@ -150,24 +164,23 @@ VOID Fini(INT32 code, VOID *v)
 
 VOID RecordMemRead(VOID * ip, VOID * addr)
 {
-	for (int i = 0; i < count; i++) {
-		if (arr[i].addr <= addr && addr < arr[i].addr + arr[i].size) {
-			TraceFile << "R " << arr[i].addr << " " << addr << endl;
-			readSuccess++;
-		}
-		else readFail++;
-	}
+	// read lock
+//	pthread_rwlock_rdlock(&rwlock);
+	if (mem_set.count((char *)addr))
+		readSuccess++;
+	else
+		readFail++;
+//	pthread_rwlock_rdlock(&rwlock);
 }
 
 VOID RecordMemWrite(VOID * ip, VOID * addr)
 {
-	for (int i = 0; i < count; i++) {
-		if (arr[i].addr <= addr && addr < arr[i].addr + arr[i].size) {
-			TraceFile << "W " << arr[i].addr << " " << addr << endl;
-			writeSuccess++;
-		}
-		else writeFail++;
-	}
+//	pthread_rwlock_rdlock(&rwlock);
+	if (mem_set.count((char *)addr))
+		writeSuccess++;
+	else
+		writeFail++;
+//	pthread_rwlock_rdlock(&rwlock);
 }
 
 // check memory read & write
@@ -197,7 +210,6 @@ VOID Instruction(INS ins, VOID *v)
 VOID *newMalloc( FP_MALLOC orgFuncptr, UINT32 arg0, ADDRINT returnIp )
 //inline void *newMalloc(size_t size)
 {
-//	void *retAddr;
 	void *v = orgFuncptr(arg0);
 
 //	retAddr = malloc(size);
@@ -240,6 +252,7 @@ int main(int argc, char *argv[])
     TraceFile << "Start\n";
     reserveShadowMemory();
     TraceFile << "Setup\n";
+    pthread_rwlock_init(&rwlock, NULL);
     
     TraceFile << hex;
     TraceFile.setf(ios::showbase);
