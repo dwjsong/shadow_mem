@@ -1,2 +1,0 @@
-sudo ../../pin/pin -t malloctrace.so -- ../../a.out
-
