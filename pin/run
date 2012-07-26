@@ -1,0 +1,1 @@
+sudo ../../pin/pin -t pin_mem_profiler.so -- ../../a.out
