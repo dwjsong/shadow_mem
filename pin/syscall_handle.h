@@ -4,6 +4,7 @@
 #endif
 
 #include "pin.H"
+#include "shadow_map.h"
 
 #define BRK_SYSCALL 45
 #define MUNMAP_SYSCALL 91

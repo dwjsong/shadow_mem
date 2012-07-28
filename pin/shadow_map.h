@@ -7,10 +7,10 @@
 #define STACK "[stack]"
 #define HEAP "[heap]"
 
-static int isMalloced;
-static int no_free;
 extern pid_t pid;
-static int malloc_size;
+extern int isMalloced;
+extern int no_free;
+extern int malloc_size;
 static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;//(1ULL << 44);
 typedef VOID * ( *FP_MALLOC )( size_t );
 
@@ -40,15 +40,19 @@ extern struct range global_range;
 
 extern unsigned int offset;
 
+extern int doingMalloc;
+
 extern int heap_suc;
 extern int heap_fail;
+
+extern struct range heap;
 
 int checkShadowMap(int addr, int size);
 void read_map();
 void reserveShadowMemory();
 void freeShadowMemory();
-int markMalloc(int addr, int size);
-int unmarkMalloc(int addr, int size);
+int markMalloc(unsigned long addr, int size);
+int unmarkMalloc(unsigned long addr, int size);
 VOID MallocBefore(CHAR * name, ADDRINT size);
 VOID BeforeFree(CHAR * name, ADDRINT addr);
 VOID MallocAfter(ADDRINT ret);

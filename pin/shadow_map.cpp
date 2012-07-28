@@ -10,9 +10,9 @@
 #include <string.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <errno.h>
 
 #include <map>
-#include "syscall_handle.h"
 #include "inst_handle.h"
 #include "shadow_map.h"
 
@@ -40,6 +40,11 @@ struct range heap_range;
 struct range stack_range;
 struct range global_range;
 
+struct range heap;
+
+int isMalloced;
+int is_free;
+int doingMalloc;
 unsigned int offset;
 unsigned long free_addr;
 
@@ -49,6 +54,9 @@ int byte_size = 4;
 
 int heap_suc;
 int heap_fail;
+
+int malloc_size;
+int no_free;
 
 // read /proc/pid/maps to get memory mapping
 void read_map()
@@ -121,8 +129,21 @@ void read_map()
 // reserve memory from 0x2000000
 void reserveShadowMemory()
 {
+	void *protect_addr;
+//	unsigned char *add;
+
 	offset = (int) mmap(NULL, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-//	printf("Shadow Memory at %p\n", (void *)offset);
+
+	printf("Shadow Memory at %p\n", (void *)offset);
+	protect_addr = (void *)((offset >> 3) + offset);
+	printf("	Shadow Protect at %p size %d\n", protect_addr, shadowMemSize / 8);
+
+	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
+		printf("Shadow Memory Protection Error\n");
+		printf("err %d\n", errno);
+	}
+//	add = (unsigned char*)protect_addr;
+//	*add= 1;
 }
 
 // remove shadow memory
@@ -208,8 +229,9 @@ VOID MallocBefore(CHAR * name, ADDRINT size)
 {
 	if (!isMalloced) {
 		malloc_size = size;
-//		printf("Malloc %d\n", size);
+		printf("Malloc %d\n", size);
 		isMalloced = 1;
+		doingMalloc = 1;
 	}
 }
 
@@ -228,7 +250,7 @@ VOID MallocAfter(ADDRINT ret)
 	int left_over;
 
 	if (isMalloced) {
-//		printf("Malloc %p\n", (void *)ret);
+		printf("Malloc Address %p\n", (void *)ret);
 		isMalloced = 0;
 		mlc_size[ret] = malloc_size;
 		/* for align */
@@ -237,6 +259,7 @@ VOID MallocAfter(ADDRINT ret)
 		markMalloc((unsigned long)ret - byte_size, malloc_size + byte_size * 2 + left_over);
 //		read_map();
 	}
+	doingMalloc = 0;
 }
 
 // after free
