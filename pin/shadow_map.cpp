@@ -45,7 +45,7 @@ struct range heap;
 int isMalloced;
 int is_free;
 int doingMalloc;
-unsigned int offset;
+unsigned int offset = 0x20000000;;
 unsigned long free_addr;
 
 struct rlimit limit;
@@ -129,18 +129,21 @@ void read_map()
 // reserve memory from 0x2000000
 void reserveShadowMemory()
 {
+//	int pagesize;
 	void *protect_addr;
 //	unsigned char *add;
 
-	offset = (int) mmap(NULL, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	offset = (int) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+//	pagesize = sysconf(_SC_PAGE_SIZE);
 
-	printf("Shadow Memory at %p\n", (void *)offset);
+//	printf("Shadow Memory from %p %p\n", (void *)offset, (void *)(offset + shadowMemSize));
 	protect_addr = (void *)((offset >> 3) + offset);
-	printf("	Shadow Protect at %p size %d\n", protect_addr, shadowMemSize / 8);
+//	printf("	Shadow Protect at %p size %d %lu\n", protect_addr, (int)shadowMemSize / 8, (unsigned long)protect_addr - (unsigned long)offset);
+//	printf("	page = %d\n",pagesize);
 
 	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
 		printf("Shadow Memory Protection Error\n");
-		printf("err %d\n", errno);
+//		printf("err %d\n", errno);
 	}
 //	add = (unsigned char*)protect_addr;
 //	*add= 1;
@@ -164,7 +167,7 @@ int checkShadowMap(int addr, int size)
 	unsigned char *temp_addr;
 
 	tmp_addr = addr;
-//	printf("Shadow Memory at %p\n", (void *)offset);
+//	printf("Shadow Memory at %p checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
 	for (int i = 0; i < size; i++) {
 		new_addr = ((tmp_addr + i) >> 3) + offset;
 		temp_addr = (unsigned char *)new_addr;
@@ -186,7 +189,7 @@ int markMalloc(unsigned long addr, int size)
 
 	tmp_addr = addr;
 	// mark shadow memory bit by bit
-//	printf("Shadow Memory at %p\n", (void *)offset);
+//	printf("Shadow Memory at %p and checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
 	for (int i = 0; i < size; i++) {
 		new_addr = ((tmp_addr + i) >> 3) + offset;
 		temp_addr = (unsigned char *)new_addr;
@@ -229,7 +232,7 @@ VOID MallocBefore(CHAR * name, ADDRINT size)
 {
 	if (!isMalloced) {
 		malloc_size = size;
-		printf("Malloc %d\n", size);
+//		printf("Malloc %d\n", size);
 		isMalloced = 1;
 		doingMalloc = 1;
 	}
@@ -250,7 +253,7 @@ VOID MallocAfter(ADDRINT ret)
 	int left_over;
 
 	if (isMalloced) {
-		printf("Malloc Address %p\n", (void *)ret);
+//		printf("Malloc Address %p\n", (void *)ret);
 		isMalloced = 0;
 		mlc_size[ret] = malloc_size;
 		/* for align */

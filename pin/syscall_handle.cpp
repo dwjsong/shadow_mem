@@ -17,24 +17,24 @@ void syscall_enter(THREADID tid, CONTEXT *ctx, SYSCALL_STANDARD std, VOID *v)
 	switch (syscall_nr) {
 
 		case BRK_SYSCALL :
-			printf("brk enter : %d\n", syscall_nr);
+//			printf("brk enter : %d\n", syscall_nr);
 			arg1 = PIN_GetSyscallArgument(ctx, std, 0);
 			brk_arg = arg1;
-			printf("	brk addr %d %p\n", arg1, (void *)arg1);
+//			printf("	brk addr %d %p\n", arg1, (void *)arg1);
 			break;
 
 		case MUNMAP_SYSCALL :
-			printf("unmap enter : %d\n", syscall_nr);
+//			printf("unmap enter : %d\n", syscall_nr);
 			arg1 = PIN_GetSyscallArgument(ctx, std, 0);
 			arg2 = PIN_GetSyscallArgument(ctx, std, 1);
-			printf("	unmap size %p %d\n", (void *)arg1, arg2);
+//			printf("	unmap size %p %d\n", (void *)arg1, arg2);
 			break;
 
 		case MMAP_SYSCALL :
-			printf("mmap enter : %d\n", syscall_nr);
+//			printf("mmap enter : %d\n", syscall_nr);
 			arg1 = PIN_GetSyscallArgument(ctx, std, 0);
 			arg2 = PIN_GetSyscallArgument(ctx, std, 1);
-			printf("	mmap size %d\n", arg2);
+//			printf("	mmap size %d\n", arg2);
 			mmap_size = arg2;
 			break;
 	}
@@ -48,7 +48,7 @@ void syscall_exit(THREADID tid, CONTEXT *ctx, SYSCALL_STANDARD std, VOID *v)
 	switch (syscall_nr) {
 
 		case BRK_SYSCALL :
-			printf("brk exit : %d\n", syscall_nr);
+//			printf("brk exit : %d\n", syscall_nr);
 			ret = PIN_GetSyscallReturn(ctx, std);
 			read_map();
 			if (!brk_arg) {
@@ -67,23 +67,24 @@ void syscall_exit(THREADID tid, CONTEXT *ctx, SYSCALL_STANDARD std, VOID *v)
 				heap.upper_addr = (void *)ret;
 
 				/* mark brk heap */
-				if (markMalloc(ret, heap.upper - heap.lower))
+//				printf("shadow %p %p %d\n", heap.lower_addr, heap.upper_addr, heap.upper - heap.lower);
+				if (markMalloc(ret, heap.upper - heap.lower) < 0)
 					printf("Shadow Map Mark Failed at %p", (void *)ret);
 			}
-			printf("	brk ret %d %p\n", ret, (void *)ret);
+//			printf("	brk ret %d %p\n", ret, (void *)ret);
 			break;
 
 		case MUNMAP_SYSCALL :
-			printf("unmap exit : %d\n", syscall_nr);
+//			printf("unmap exit : %d\n", syscall_nr);
 			break;
 
 		case MMAP_SYSCALL :
-			printf("mmap exit : %d\n", syscall_nr);
+//			printf("mmap exit : %d %d\n", syscall_nr, mmap_size);
 			ret = PIN_GetSyscallReturn(ctx, std);
 
-			if (markMalloc(ret, mmap_size))
+			if (markMalloc(ret, mmap_size) < 0)
 				printf("Shadow Map Mark Failed at %p", (void *)ret);
-			printf("	mmap ret %p\n", (void *)ret);
+//			printf("	mmap ret %p\n", (void *)ret);
 			break;
 	}
 }

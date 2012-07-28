@@ -3,6 +3,89 @@
 #include "inst_handle.h"
 #include "shadow_map.h"
 
+VOID RecordMemRead(VOID * ip, VOID * addr)
+{
+	int shadowed;
+	int size = 4;
+	unsigned long addr_val = (unsigned long) addr;
+
+	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
+		stack_count.read++;
+	}
+	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
+		if (!doingMalloc) {
+			heap_count.read++;
+			shadowed = checkShadowMap(addr_val, size);
+			heap_suc += shadowed;
+			heap_fail += size - shadowed;
+			if (size > shadowed) {
+//				printf("	malloc %p\n", (void *)addr_val);
+//				printf("	shadowed %d %d\n", shadowed, size - shadowed);
+			}
+		}
+	}
+	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
+		global_count.read++;
+	}
+	else {
+		other_count.read++;
+	}
+//	printf("%p: R %p\n", ip, addr);
+}
+
+VOID RecordMemWrite(VOID * ip, VOID * addr)
+{
+	int shadowed;
+	int size = 4;
+	unsigned long addr_val = (unsigned long) addr;
+
+	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
+		stack_count.write++;
+	}
+	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
+		if (!doingMalloc) {
+			heap_count.write++;
+			shadowed = checkShadowMap(addr_val, size);
+			heap_suc += shadowed;
+			heap_fail += size - shadowed;
+			if (size > shadowed) {
+//				printf("	malloc %p\n", (void *)addr_val);
+//				printf("	shadowed %d %d\n", shadowed, size - shadowed);
+			}
+		}
+	}
+	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
+		global_count.write++;
+	}
+	else {
+		other_count.write++;
+	}
+//	printf("%p: W %p\n", ip, addr);
+}
+
+VOID load_store_inst(INS ins, VOID *v)
+{
+	UINT32 memOperands = INS_MemoryOperandCount(ins);
+
+	for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
+		if (INS_MemoryOperandIsRead(ins, memOp)) {
+			INS_InsertPredicatedCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
+                IARG_INST_PTR,
+                IARG_MEMORYOP_EA, memOp,
+                IARG_END);
+		}
+
+		if (INS_MemoryOperandIsWritten(ins, memOp)) {
+			INS_InsertPredicatedCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
+                IARG_INST_PTR,
+                IARG_MEMORYOP_EA, memOp,
+                IARG_END);
+		}
+	}
+}
+
 // load count
 VOID DoLoad(REG reg, ADDRINT *addr, ADDRINT size)
 {
@@ -13,10 +96,12 @@ VOID DoLoad(REG reg, ADDRINT *addr, ADDRINT size)
 		stack_count.read++;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		heap_count.read++;
-		shadowed = checkShadowMap(addr_val, size);
-		heap_suc += shadowed;
-		heap_fail += size - shadowed;
+		if (!doingMalloc) {
+			heap_count.read++;
+			shadowed = checkShadowMap(addr_val, size);
+			heap_suc += shadowed;
+			heap_fail += size - shadowed;
+		}
 	}
 	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read++;
@@ -36,10 +121,12 @@ VOID DoStore(REG reg, ADDRINT *addr, ADDRINT size)
 		stack_count.write++;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		heap_count.write++;
-		shadowed = checkShadowMap(addr_val, size);
-		heap_suc += shadowed;
-		heap_fail += size - shadowed;
+		if (!doingMalloc) {
+			heap_count.write++;
+			shadowed = checkShadowMap(addr_val, size);
+			heap_suc += shadowed;
+			heap_fail += size - shadowed;
+		}
 	}
 	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.write++;
@@ -61,12 +148,11 @@ VOID DoLoadStore(REG reg, ADDRINT *addr, ADDRINT size)
 		stack_count.write++;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		printf("addr %p %d %d %d\n", addr, *addr, *(addr + 1), *(addr - 1));
 		heap_count.read++;
 		heap_count.write++;
 		shadowed = checkShadowMap(addr_val, size);
-		printf("load store %d %d\n", size, shadowed);
-		printf("heap range %x %x\n", heap_range.lower, heap_range.upper);
+		heap_suc += shadowed;
+		heap_fail += size - shadowed;
 	}
 	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read++;
@@ -81,8 +167,8 @@ VOID DoLoadStore(REG reg, ADDRINT *addr, ADDRINT size)
 // if the instruction is load
 VOID inst_check(INS ins, VOID* v)
 {
-	int size;
-	REG src, dst, base, idx;
+	int size = 4;
+	REG src, dst;
 	xed_iclass_enum_t ins_idx = (xed_iclass_enum_t)INS_Opcode(ins);
 
 

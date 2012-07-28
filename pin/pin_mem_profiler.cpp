@@ -86,7 +86,7 @@ VOID Fini(INT32 code, VOID *v)
 int init()
 {
 	pid = PIN_GetPid();
-	printf("pid %d\n",pid);
+//	printf("pid %d\n",pid);
     read_map();
 
     TraceFile.open(KnobOutputFile.Value().c_str());
@@ -97,7 +97,8 @@ int init()
     TraceFile.setf(ios::showbase);
    
     // Trace memory read & write
-    INS_AddInstrumentFunction(inst_check, 0);
+	INS_AddInstrumentFunction(load_store_inst, 0);
+//    INS_AddInstrumentFunction(inst_check, 0);
     IMG_AddInstrumentFunction(Image, 0);
 
     // insert code before and after malloc 
