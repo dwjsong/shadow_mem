@@ -1,6 +1,12 @@
 #include "pub_tool_basics.h"
 #include "pub_tool_tooliface.h"
 #include "pub_tool_machine.h"     // VG_(fnptr_to_fnentry)
+#include "valgrind.h"
+
+#include "config.h"
+
+#include "pub_tool_threadstate.h"
+#include "pub_tool_gdbserver.h"
 
 typedef 
 enum { Event_Load, Event_Store}
@@ -13,7 +19,15 @@ struct {
 	Int        size;
 } Event;
 
+typedef struct {
+	UChar bits;
+} Shadow;
 
+//Shadow shadow_map[402653184];
+unsigned int offset = 0x20000000;
+
+//static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;
+static const unsigned long shadowMemSize = 1024;
 
 #define MAX_EVENTS 4
 
@@ -23,16 +37,53 @@ static Int   eventCount= 0;
 static ULong loadCount = 0;
 static ULong storeCount = 0;
 
+#define __NR_mmap2 192
+
+#define PROT_READ	0x1
+#define PROT_WRITE	0x2
+#define MAP_SHARED	0x01
+#define MAP_ANONYMOUS	0x20
+extern Int VG_(do_syscall) ( UInt, ... );
+
+static void reserveShadowMemory()
+{
+//	VG_(do_syscall)(__NR_mmap2, NULL, 4096, 0, 0, -1, 0, 0, 0);
+//	vgPlain_do_syscall(1);
+	//PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0, 0, 0);
+//	offset = VG_(do_syscall)(__NR_mmap2, NULL, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0, 0, 0);
+//	VG_(printf)("Shadow Memory %p\n", (void *)offset);
+//	offset = (int) syscall(__NR_mmap2, (void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	/*
+	protect_addr = (void *)((offset >> 3) + offset);
+
+
+	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
+		VG_(printf)("Shadow Memory Protection Error\n");
+	}
+	*/
+}
+
+static void freeShadowMemory()
+{
+	/*
+	int ret = munmap((void *)offset, shadowMemSize);
+
+	if (ret < 0)
+		VG_(printf)("Shadow Memory at %p Free Failed!\n", (void *)offset);
+	*/
+	
+}
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 {
 	loadCount++;
+//	VG_(printf)(" L %08lx,%lu\n", addr, size);
 }
 
 static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 {
 	storeCount++;
-	//   VG_(printf)(" S %08lx,%lu\n", addr, size);
+//	VG_(printf)(" S %08lx,%lu\n", addr, size);
 }
 
 static void flushEvents(IRSB* sb)
@@ -126,7 +177,8 @@ IRSB* pf_instrument ( VgCallbackClosure* closure,
 
 		if (!stmt || stmt->tag == Ist_NoOp) continue;
 
-		//		ppIRStmt(stmt);
+//		ppIRStmt(stmt);
+//		VG_(printf)("\n");
 
 		// what kind of statement is it?
 		switch (stmt->tag) {
@@ -234,8 +286,21 @@ static void pf_fini(Int exitcode)
 {
 	VG_(printf)("Load  : %d \n", loadCount);
 	VG_(printf)("Store : %d \n", storeCount);
+	freeShadowMemory();
 }
 
+
+static void pre_syscall(ThreadId tid, UInt syscallno,
+                           UWord* args, UInt nArgs)
+{
+	VG_(printf)("pre\n");
+}
+
+static
+void post_syscall(ThreadId tid, UInt syscallno,
+                            UWord* args, UInt nArgs, SysRes res)
+{
+}
 static void pf_pre_clo_init(void)
 {
 	VG_(details_name)            ("val_shadow");
@@ -251,6 +316,10 @@ static void pf_pre_clo_init(void)
 			pf_instrument,
 			pf_fini);
 
+    VG_(needs_syscall_wrapper)(pre_syscall,
+			       post_syscall);
+
+	reserveShadowMemory();
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pf_pre_clo_init)
