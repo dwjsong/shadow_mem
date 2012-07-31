@@ -7,9 +7,11 @@
 
 #include "pub_tool_threadstate.h"
 #include "pub_tool_gdbserver.h"
+#include <sys/syscall.h>
+#include <sys/mman.h>
 
 typedef 
-enum { Event_Load, Event_Store}
+enum { Event_Load, Event_Store }
 EventKind;
 
 typedef
@@ -23,8 +25,10 @@ typedef struct {
 	UChar bits;
 } Shadow;
 
-//Shadow shadow_map[402653184];
-unsigned int offset = 0x20000000;
+Shadow shadow_map[402653184];
+//unsigned int offset = 0x20000000;
+
+int xx = 0;
 
 //static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;
 static const unsigned long shadowMemSize = 1024;
@@ -37,20 +41,34 @@ static Int   eventCount= 0;
 static ULong loadCount = 0;
 static ULong storeCount = 0;
 
+struct mov_count {
+	unsigned long read;
+	unsigned long write;
+};
+
+struct mov_count heap_count;
+
+int heap_suc;
+int heap_fail;
+
 #define __NR_mmap2 192
 
 #define PROT_READ	0x1
 #define PROT_WRITE	0x2
 #define MAP_SHARED	0x01
 #define MAP_ANONYMOUS	0x20
-extern Int VG_(do_syscall) ( UInt, ... );
+
+#define BRK_SYSCALL 45
+#define MUNMAP_SYSCALL 91
+#define MMAP_SYSCALL 192
 
 static void reserveShadowMemory()
 {
+	Addr a = 0x20000000;
 //	VG_(do_syscall)(__NR_mmap2, NULL, 4096, 0, 0, -1, 0, 0, 0);
 //	vgPlain_do_syscall(1);
 	//PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0, 0, 0);
-//	offset = VG_(do_syscall)(__NR_mmap2, NULL, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0, 0, 0);
+//	offset = VG_(do_syscall)(__NR_mmap2, (void *)offset, (SizeT)shadowMemSize, (UInt)PROT_READ | PROT_WRITE, (UInt)MAP_SHARED | MAP_ANONYMOUS, (UInt)-1, (UInt)0);
 //	VG_(printf)("Shadow Memory %p\n", (void *)offset);
 //	offset = (int) syscall(__NR_mmap2, (void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	/*
@@ -76,13 +94,25 @@ static void freeShadowMemory()
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 {
-	loadCount++;
+	int count;
+
+	heap_count.read++;
+	count = checkShadowMap(addr, size);
+
+	heap_suc += count;
+	heap_fail += size - count;
 //	VG_(printf)(" L %08lx,%lu\n", addr, size);
 }
 
 static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 {
-	storeCount++;
+	int count; 
+
+	heap_count.write++;
+	count = checkShadowMap(addr, size);
+
+	heap_suc += count;
+	heap_fail += size - count;
 //	VG_(printf)(" S %08lx,%lu\n", addr, size);
 }
 
@@ -282,24 +312,142 @@ IRSB* pf_instrument ( VgCallbackClosure* closure,
 	return sbOut;
 }
 
+int checkShadowMap(int addr, int size)
+{
+	int i;
+	int ct = 0;
+	char wh;
+	unsigned long tmp_addr;
+	unsigned long new_addr;
+	unsigned char *temp_addr;
+	unsigned long offset;
+
+	tmp_addr = addr;
+	offset = shadow_map;
+//	printf("Shadow Memory at %p checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
+	for (i = 0; i < size; i++) {
+		new_addr = ((tmp_addr + i) >> 3) + offset;
+		temp_addr = (unsigned char *)new_addr;
+		wh = (tmp_addr + i) & 7;
+//		printf("	check %p %p %d\n", (tmp_addr + i), temp_addr, *temp_addr);
+		wh = (*temp_addr >> wh) & 1;
+		ct += wh;
+	}
+	return ct;
+}
 static void pf_fini(Int exitcode)
 {
-	VG_(printf)("Load  : %d \n", loadCount);
-	VG_(printf)("Store : %d \n", storeCount);
-	freeShadowMemory();
+	VG_(printf)("shadow map : %p \n", shadow_map);
+	
+	VG_(printf)("Load  : %d \n", heap_count.read);
+	VG_(printf)("Store : %d \n", heap_count.write);
+
+	VG_(printf)("Heap Success : %d\n", heap_suc);
+	VG_(printf)("Heap Fail : %d\n", heap_fail);
 }
 
+int unmarkMalloc(unsigned long addr, int size)
+{
+	int i;
+	unsigned long tmp_addr;
+	unsigned long new_addr;
+	unsigned char *temp_addr;
+	unsigned long offset;
+
+	tmp_addr = addr;
+	offset = shadow_map;
+	// unmark shadow memory by byte
+//	printf("unmark Memory at %p size %d\n", (void *)offset, size);
+	for (i = 0; i < size; i += 8) {
+		new_addr = ((tmp_addr + i) >> 3) + offset;
+		temp_addr = (unsigned char *)new_addr;
+		// if 8 byte is going to be unmarked the shadow memory will be 0
+		if (i + 8 < size) {
+			*temp_addr = 0;
+		}
+		// if less than 8 bytes left
+		else {
+			*temp_addr = (*temp_addr >> (i + 8 - size)) << (i + 8 - size);
+		}
+	}
+
+	return 0;
+}
+
+int markMalloc(unsigned long addr, int size)
+{
+	int i;
+	char wh;
+	unsigned long tmp_addr;
+	unsigned long new_addr;
+	unsigned char *temp_addr;
+	unsigned long offset;
+
+	tmp_addr = addr;
+	offset = shadow_map;
+	// mark shadow memory bit by bit
+//	VG_(printf)("Shadow Memory at %p and checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
+	for (i = 0; i < size; i++) {
+		new_addr = ((tmp_addr + i) >> 3) + offset;
+		temp_addr = (unsigned char *)new_addr;
+		wh = (tmp_addr + i) & 7;
+//		VG_(printf)("	mark %p %p %d\n", (tmp_addr + i), temp_addr, *temp_addr);
+		*temp_addr = *temp_addr | (1 << wh);
+	}
+
+	return 0;
+}
 
 static void pre_syscall(ThreadId tid, UInt syscallno,
                            UWord* args, UInt nArgs)
 {
-	VG_(printf)("pre\n");
+/*
+	int h;
+
+	switch (syscallno) {
+		case BRK_SYSCALL :
+			VG_(printf)("brk = %p\n", args[0]);
+			break;
+
+		case MUNMAP_SYSCALL :
+			VG_(printf)("munmap = %p\n", args[0]);
+			break;
+
+		case MMAP_SYSCALL :
+			VG_(printf)("mmap size = %d\n", args[1]);
+			break;
+
+	}
+	*/
 }
 
 static
 void post_syscall(ThreadId tid, UInt syscallno,
                             UWord* args, UInt nArgs, SysRes res)
 {
+	unsigned long addr;
+	int size;
+
+	switch (syscallno) {
+		case BRK_SYSCALL :
+			VG_(printf)("brk = %p\n", args[0]);
+			VG_(printf)("	brk return = %p\n", res);
+			break;
+
+		case MUNMAP_SYSCALL :
+			VG_(printf)("munmap = %p\n", args[0]);
+			VG_(printf)("	munmap return = %d\n", res);
+			break;
+
+		case MMAP_SYSCALL :
+			VG_(printf)("mmap size = %d\n", args[1]);
+			VG_(printf)("	mmap return = %p\n", res);
+			addr = (unsigned long)sr_Res(res);
+			size = args[1];
+			markMalloc(addr, size);
+			break;
+
+	}
 }
 static void pf_pre_clo_init(void)
 {
@@ -319,7 +467,7 @@ static void pf_pre_clo_init(void)
     VG_(needs_syscall_wrapper)(pre_syscall,
 			       post_syscall);
 
-	reserveShadowMemory();
+	//reserveShadowMemory();
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pf_pre_clo_init)
