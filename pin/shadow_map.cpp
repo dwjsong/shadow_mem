@@ -36,6 +36,9 @@ struct mov_count other_count;
 struct mov_count heap_count;
 struct mov_count global_count;
 
+struct mov_count heap_success;
+struct mov_count heap_fail;
+
 struct range heap_range;
 struct range stack_range;
 struct range global_range;
@@ -45,15 +48,16 @@ struct range heap;
 int isMalloced;
 int is_free;
 int doingMalloc;
-unsigned int offset = 0x20000000;;
+unsigned int offset = 0x20000000;
 unsigned long free_addr;
 
 struct rlimit limit;
 
 int byte_size = 4;
-
+/*
 int heap_suc;
 int heap_fail;
+*/
 
 int malloc_size;
 int no_free;
@@ -129,24 +133,15 @@ void read_map()
 // reserve memory from 0x2000000
 void reserveShadowMemory()
 {
-//	int pagesize;
 	void *protect_addr;
-//	unsigned char *add;
 
 	offset = (int) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-//	pagesize = sysconf(_SC_PAGE_SIZE);
 
-//	printf("Shadow Memory from %p %p\n", (void *)offset, (void *)(offset + shadowMemSize));
 	protect_addr = (void *)((offset >> 3) + offset);
-//	printf("	Shadow Protect at %p size %d %lu\n", protect_addr, (int)shadowMemSize / 8, (unsigned long)protect_addr - (unsigned long)offset);
-//	printf("	page = %d\n",pagesize);
 
 	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
 		printf("Shadow Memory Protection Error\n");
-//		printf("err %d\n", errno);
 	}
-//	add = (unsigned char*)protect_addr;
-//	*add= 1;
 }
 
 // remove shadow memory
@@ -167,12 +162,10 @@ int checkShadowMap(int addr, int size)
 	unsigned char *temp_addr;
 
 	tmp_addr = addr;
-//	printf("Shadow Memory at %p checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
 	for (int i = 0; i < size; i++) {
 		new_addr = ((tmp_addr + i) >> 3) + offset;
 		temp_addr = (unsigned char *)new_addr;
 		wh = (tmp_addr + i) & 7;
-//		printf("	check %p %p %d\n", (tmp_addr + i), temp_addr, *temp_addr);
 		wh = (*temp_addr >> wh) & 1;
 		ct += wh;
 	}
@@ -188,13 +181,10 @@ int markMalloc(unsigned long addr, int size)
 	unsigned char *temp_addr;
 
 	tmp_addr = addr;
-	// mark shadow memory bit by bit
-//	printf("Shadow Memory at %p and checking %p\n", (void *)offset, (void *)((tmp_addr >> 3) + offset));
 	for (int i = 0; i < size; i++) {
 		new_addr = ((tmp_addr + i) >> 3) + offset;
 		temp_addr = (unsigned char *)new_addr;
 		wh = (tmp_addr + i) & 7;
-//		printf("	mark %p %p %d\n", (tmp_addr + i), temp_addr, *temp_addr);
 		*temp_addr = *temp_addr | (1 << wh);
 	}
 
@@ -209,16 +199,12 @@ int unmarkMalloc(unsigned long addr, int size)
 	unsigned char *temp_addr;
 
 	tmp_addr = addr;
-	// unmark shadow memory by byte
-//	printf("unmark Memory at %p size %d\n", (void *)offset, size);
 	for (int i = 0; i < size; i += 8) {
 		new_addr = ((tmp_addr + i) >> 3) + offset;
 		temp_addr = (unsigned char *)new_addr;
-		// if 8 byte is going to be unmarked the shadow memory will be 0
 		if (i + 8 < size) {
 			*temp_addr = 0;
 		}
-		// if less than 8 bytes left
 		else {
 			*temp_addr = (*temp_addr >> (i + 8 - size)) << (i + 8 - size);
 		}
@@ -232,7 +218,6 @@ VOID MallocBefore(CHAR * name, ADDRINT size)
 {
 	if (!isMalloced) {
 		malloc_size = size;
-//		printf("Malloc %d\n", size);
 		isMalloced = 1;
 		doingMalloc = 1;
 	}

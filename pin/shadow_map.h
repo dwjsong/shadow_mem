@@ -33,6 +33,8 @@ extern struct mov_count stack_count;
 extern struct mov_count other_count;
 extern struct mov_count heap_count;
 extern struct mov_count global_count;
+extern struct mov_count heap_success;
+extern struct mov_count heap_fail;
 
 extern struct range heap_range;
 extern struct range stack_range;
@@ -41,9 +43,6 @@ extern struct range global_range;
 extern unsigned int offset;
 
 extern int doingMalloc;
-
-extern int heap_suc;
-extern int heap_fail;
 
 extern struct range heap;
 
