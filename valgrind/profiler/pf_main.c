@@ -5,6 +5,7 @@
 #include "pub_tool_libcproc.h"
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcfile.h"
+#include "pub_tool_vki.h"
 
 #include "config.h"
 
@@ -98,6 +99,8 @@ static void check_mem_map()
 	Char temp_s2[16];
 	struct range temp;
 	ULong tt;
+	struct vki_rlimit rl;
+	struct vki_rlimit rl2;
 	
 	pid = VG_(getpid)();
 	VG_(sprintf)(buff, "%d", pid);
@@ -144,13 +147,22 @@ static void check_mem_map()
 
 					VG_(strncpy)(temp_s, prev_line, 8);
 					
-					stack_range.lower = VG_(strtoull16)(temp_s, NULL);
+//					stack_range.lower = VG_(strtoull16)(temp_s, NULL);
 					VG_(strncpy)(temp_s2, prev_line + 9, 8);
 					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
 
+					VG_(getrlimit(VKI_RLIMIT_STACK, &rl));
+					VG_(getrlimit(VKI_RLIMIT_DATA, &rl2));
+					stack_range.lower = stack_range.upper - rl.rlim_max;
 
 					stack_range.lower_addr = (void *)stack_range.lower;
 					stack_range.upper_addr = (void *)stack_range.upper;
+
+
+/*
+					VG_(printf("limit cur %d\n",rl2.rlim_cur));
+					VG_(printf("limit max %d\n",rl2.rlim_max));
+					*/
 					
 
 					heap_range.upper = stack_range.lower;
@@ -208,7 +220,8 @@ static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 	Int count;
 	ULong addr_val = (unsigned long) addr;
 
-	if (global_range.upper > addr_val) {
+// 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
@@ -216,9 +229,15 @@ static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 		count = checkShadowMap(addr, size);
 		heap_success.read += count;
 		heap_fail.read += size - count;
+		if (size > count) {
+		 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+		}
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
+	}
+	else {
+		other_count.read += size;
 	}
 }
 
@@ -227,7 +246,7 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 	Int count; 
 	ULong addr_val = (unsigned long) addr;
 
-	if (global_range.upper > addr_val) {
+	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
@@ -238,6 +257,9 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
+	}
+	else {
+		other_count.write += size;
 	}
 }
 
@@ -531,6 +553,11 @@ static void pre_syscall(ThreadId tid, UInt syscallno,
                            UWord* args, UInt nArgs)
 {
 /*
+	VG_(printf)("Before syscall\n");
+	check_mem_map();
+	VG_(printf)("===========================================\n");
+	*/
+/*
 	Int h;
 
 	switch (syscallno) {
@@ -557,6 +584,11 @@ void post_syscall(ThreadId tid, UInt syscallno,
 	ULong addr;
 	Int size;
 
+/*
+	VG_(printf)("After syscall\n");
+	check_mem_map();
+	VG_(printf)("syscall = %d\n", syscallno);
+	*/
 	switch (syscallno) {
 		case BRK_SYSCALL :
 			VG_(printf)("brk = %p\n", args[0]);
@@ -564,6 +596,7 @@ void post_syscall(ThreadId tid, UInt syscallno,
 			addr = (ULong)sr_Res(res);
 
 			if ((ULong)args[0] == 0) {
+//				check_mem_map();
 				global_range.upper = addr;
 				global_range.upper_addr = (void *)addr;
 
@@ -580,16 +613,16 @@ void post_syscall(ThreadId tid, UInt syscallno,
 			break;
 
 		case MUNMAP_SYSCALL :
-//			VG_(printf)("munmap = %p\n", args[0]);
-//			VG_(printf)("	munmap return = %d\n", res);
+			VG_(printf)("munmap = %p\n", args[0]);
+			VG_(printf)("	munmap return = %d\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
 			unmarkMalloc(addr, size);
 			break;
 
 		case MMAP_SYSCALL :
-//			VG_(printf)("mmap size = %d\n", args[1]);
-//			VG_(printf)("	mmap return = %p\n", res);
+			VG_(printf)("mmap size = %d\n", args[1]);
+			VG_(printf)("	mmap return = %p\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
 			markMalloc(addr, size);
@@ -618,16 +651,55 @@ static void set_range(void)
 
 static void pf_fini(Int exitcode)
 {
+	ULong a, b;
 	Int total = stack_count.read + heap_count.read + global_count.read + other_count.read;
+	Char tmp[10];
 
-	VG_(printf)("Read\n", shadow_map);
+	VG_(printf)("Read Total : %d\n", total);
 	
-	VG_(printf)("Stack : %d (%f)\n", stack_count.read, (float)(100 * stack_count.read / total));
-	VG_(printf)("Heap  : %d (%f)\n", heap_count.read, (float)(100 * heap_count.read / total));
-
+	VG_(printf)("Stack : %d ()\n", stack_count.read, tmp);
+	VG_(printf)("Heap  : %d ()\n", heap_count.read, tmp);
 	VG_(printf)("	Success : %d\n", heap_success.read);
 	VG_(printf)("	Fail : %d\n", heap_fail.read);
-	VG_(printf)("Global : %d (%f)\n", global_count.read, (float)(100 * global_count.read / total));
+	VG_(printf)("Global : %d (%f)\n", global_count.read, (Float)(100 * global_count.read) / (Float)total);
+	VG_(printf)("Other : %d (%f)\n", other_count.read, (float)(100 * other_count.read / total));
+
+	VG_(printf)("Write\n");
+	
+	VG_(printf)("Stack : %d (%f)\n", stack_count.write, (float)(100 * stack_count.write / total));
+	VG_(printf)("Heap  : %d (%f)\n", heap_count.write, (float)(100 * heap_count.write / total));
+
+	VG_(printf)("	Success : %d\n", heap_success.write);
+	VG_(printf)("	Fail : %d\n", heap_fail.write);
+	VG_(printf)("Global : %d (%f)\n", global_count.write, (float)(100 * global_count.write / total));
+	VG_(printf)("Other : %d (%f)\n", other_count.write, (float)(100 * other_count.write / total));
+}
+
+void new_mem_startup( Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle )
+{
+	VG_(printf)("new mem addr = %p size = %d\n", a, len);
+	markMalloc(a, len);
+}
+
+void make_mem_undefined_w_tid ( Addr a, SizeT len, ThreadId tid ) 
+{
+	VG_(printf)("undefined addr = %p size = %d\n", a, len);
+	markMalloc(a, len);
+}
+
+void check_write(CorePart part, ThreadId tid, Addr a, SizeT len)
+{
+	VG_(printf)("write %p \n",a);
+}
+
+void remap(Addr from, Addr to, SizeT len)
+{
+	VG_(printf)("remap %p \n", from);
+}
+
+void new_mmap(Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle)
+{
+	VG_(printf)("new mmap %p \n", a);
 }
 
 static void pf_pre_clo_init(void)
@@ -647,6 +719,13 @@ static void pf_pre_clo_init(void)
 
     VG_(needs_syscall_wrapper)(pre_syscall,
 			       post_syscall);
+	
+	VG_(track_new_mem_startup)     ( new_mem_startup );
+	VG_(track_new_mem_brk)         ( make_mem_undefined_w_tid );
+	VG_(track_new_mem_mmap)         ( new_mmap );
+
+	VG_(track_post_mem_write)	   ( check_write );
+	VG_(track_copy_mem_remap) (remap);
 
 	set_range();
 	check_mem_map();
