@@ -7,34 +7,33 @@ VOID RecordMemRead(VOID * ip, VOID * addr)
 {
 	int shadowed;
 	int size = 4;
+	unsigned char *c;
 	unsigned long addr_val = (unsigned long) addr;
 
-	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
-		stack_count.read += size;
+//	printf("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+	if (global_range.upper > addr_val && addr_val > global_range.lower) {
+		global_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		if (!doingMalloc) {
-			heap_count.read += size;
-			shadowed = checkShadowMap(addr_val, size);
-			heap_success.read += shadowed;
-			heap_fail.read += size - shadowed;
-			/*
-			heap_suc += shadowed;
-			heap_fail += size - shadowed;
-			*/
-			if (size > shadowed) {
-//				printf("	malloc %p\n", (void *)addr_val);
-//				printf("	shadowed %d %d\n", shadowed, size - shadowed);
-			}
+
+		heap_count.read += size;
+		shadowed = checkShadowMap(addr_val, size);
+		heap_success.read += shadowed;
+		heap_fail.read += size - shadowed;
+		/*
+		heap_suc += shadowed;
+		heap_fail += size - shadowed;
+		*/
+		if (size > shadowed) {
+		//	printShadowMap(addr_val, size);
 		}
 	}
-	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
-		global_count.read += size;
+	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
+		stack_count.read += size;
 	}
 	else {
 		other_count.read += size;
 	}
-//	printf("%p: R %p\n", ip, addr);
 }
 
 VOID RecordMemWrite(VOID * ip, VOID * addr)
@@ -43,27 +42,26 @@ VOID RecordMemWrite(VOID * ip, VOID * addr)
 	int size = 4;
 	unsigned long addr_val = (unsigned long) addr;
 
-	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
-		stack_count.write += size;
+//	printf("g %p %p h %p %p s %p %p a %p\n", global_range.lower_addr, global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+	if (global_range.upper > addr_val && addr_val > global_range.lower) {
+		global_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		if (!doingMalloc) {
-			heap_count.write += size;
-			shadowed = checkShadowMap(addr_val, size);
-			heap_success.write += shadowed;
-			heap_fail.write += size - shadowed;
-			/*
-			heap_suc += shadowed;
-			heap_fail += size - shadowed;
-			*/
-			if (size > shadowed) {
+		heap_count.write += size;
+		shadowed = checkShadowMap(addr_val, size);
+		heap_success.write += shadowed;
+		heap_fail.write += size - shadowed;
+		/*
+		heap_suc += shadowed;
+		heap_fail += size - shadowed;
+		*/
+		if (size > shadowed) {
 //				printf("	malloc %p\n", (void *)addr_val);
 //				printf("	shadowed %d %d\n", shadowed, size - shadowed);
-			}
 		}
 	}
-	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
-		global_count.write += size;
+	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
+		stack_count.write += size;
 	}
 	else {
 		other_count.write += size;

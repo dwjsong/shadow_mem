@@ -31,13 +31,13 @@
 
 pid_t pid;
 
-struct mov_count stack_count;
-struct mov_count other_count;
-struct mov_count heap_count;
-struct mov_count global_count;
+struct access_count stack_count;
+struct access_count other_count;
+struct access_count heap_count;
+struct access_count global_count;
 
-struct mov_count heap_success;
-struct mov_count heap_fail;
+struct access_count heap_success;
+struct access_count heap_fail;
 
 struct range heap_range;
 struct range stack_range;
@@ -45,19 +45,12 @@ struct range global_range;
 
 struct range heap;
 
-int isMalloced;
-int is_free;
-int doingMalloc;
 unsigned int offset = 0x20000000;
-unsigned long free_addr;
+unsigned long free_addr = 0;
 
 struct rlimit limit;
 
 int byte_size = 4;
-/*
-int heap_suc;
-int heap_fail;
-*/
 
 int malloc_size;
 int no_free;
@@ -65,7 +58,8 @@ int no_free;
 // read /proc/pid/maps to get memory mapping
 void read_map()
 {
-	fstream proc_map;
+	int t;
+	ifstream proc_map;
 	struct range temp;
 	char buff[10];
 	char name[20] = "/proc/";
@@ -76,31 +70,35 @@ void read_map()
 	strncpy(name + 6, buff, strlen(buff));
 	strcat(name, "/maps");
 	
-	proc_map.open (name);
+	proc_map.open(name);
 
 	getrlimit(RLIMIT_STACK, &limit);
+
+//	printf("limit %d %d\n", limit.rlim_cur, limit.rlim_max);
+	global_range.lower = 0x8048000;
+	global_range.lower_addr = (void *)global_range.lower;
 
 	while (!proc_map.eof()) {
 		proc_map.getline(line, 256);
 		int len = strlen(line);
+//		printf("%s\n",line);
 		// Get Stack Size
 
 		if (strncmp(line + len - strlen(STACK), STACK, strlen(STACK)) == 0) {
 			sscanf(line, "%p-%p", &temp.lower_addr, &temp.upper_addr);
+//			printf("%s\n",line);
+//			printf("%p %p\n", temp.lower_addr, temp.upper_addr);
 
 			temp.lower = (unsigned long)temp.lower_addr;
 			temp.upper = (unsigned long)temp.upper_addr;
 
-			if (stack_range.upper != temp.upper) {
+//			if (stack_range.upper != temp.upper) {
 				stack_range = temp;
 				stack_range.lower = stack_range.upper - limit.rlim_cur;
 				stack_range.lower_addr = (void *)stack_range.lower;
-
-/*
-				heap_range.upper = stack_range.lower;
-				heap_range.upper_addr = (void *)stack_range.lower;
-				*/
-			}
+//				printf("%p %p\n",stack_range.lower_addr, stack_range.upper_addr);
+//				scanf("%d",&t);
+//			}
 
 		}
 		// Get Global & Heap Size
@@ -111,9 +109,11 @@ void read_map()
 			temp.lower = (unsigned long long)temp.lower_addr;
 			temp.upper = (unsigned long long)temp.upper_addr;
 
-			if (global_range.lower != temp.lower ||
-				global_range.upper != temp.upper) {
-				global_range = temp;
+//			if (global_range.lower != temp.lower ||
+			if (global_range.upper != temp.upper) {
+				global_range.upper = temp.upper;
+				global_range.upper_addr = temp.upper_addr;
+//				global_range = temp;
 			}
 			sscanf(line, "%p-%p", &temp.lower_addr, &temp.upper_addr);
 
@@ -153,112 +153,82 @@ void freeShadowMemory()
 		printf("Shadow Memory at %p Free Failed!\n", (void *)offset);
 }
 
-int checkShadowMap(int addr, int size)
+int checkShadowMap(unsigned long addr, int size)
 {
 	int ct = 0;
 	char wh;
-	unsigned long tmp_addr;
-	unsigned long new_addr;
-	unsigned char *temp_addr;
+	unsigned char *shadow_addr;
 
-	tmp_addr = addr;
 	for (int i = 0; i < size; i++) {
-		new_addr = ((tmp_addr + i) >> 3) + offset;
-		temp_addr = (unsigned char *)new_addr;
-		wh = (tmp_addr + i) & 7;
-		wh = (*temp_addr >> wh) & 1;
+		//byte-location
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+
+		//bit-position
+		wh = (addr + i) & 7;
+
+		//checking for bit-value
+		wh = (*shadow_addr >> wh) & 1;
 		ct += wh;
 	}
 	return ct;
 }
 
-// mark malloc
-int markMalloc(unsigned long addr, int size)
+int printShadowMap(unsigned long addr, int size)
+{
+	int ct = 0;
+	char wh;
+	unsigned char *shadow_addr;
+
+	for (int i = 0; i < size; i++) {
+		//byte-location
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+
+		//bit-position
+		wh = (addr + i) & 7;
+
+		//checking for bit-value
+		wh = (*shadow_addr >> wh) & 1;
+		printf("print shadow %p %d\n", (void *)shadow_addr, *shadow_addr);
+		ct += wh;
+	}
+	return ct;
+}
+
+// mark allocation
+/*
+ * JIKK: want to make this code inlinable
+ */
+int markAlloc(unsigned long addr, int size)
 {
 	char wh;
-	unsigned long tmp_addr;
-	unsigned long new_addr;
-	unsigned char *temp_addr;
+	unsigned char *shadow_addr;
 
-	tmp_addr = addr;
 	for (int i = 0; i < size; i++) {
-		new_addr = ((tmp_addr + i) >> 3) + offset;
-		temp_addr = (unsigned char *)new_addr;
-		wh = (tmp_addr + i) & 7;
-		*temp_addr = *temp_addr | (1 << wh);
-	}
+		//getting byte-location
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);	
 
+		//getting bit-position
+		wh = (addr + i) & 7;
+		*shadow_addr = *shadow_addr | (1 << wh);
+	}
 	return 0;
 }
 
-// unmark malloc
-int unmarkMalloc(unsigned long addr, int size)
+// unmark deallocation
+int unmarkAlloc(unsigned long addr, int size)
 {
-	unsigned long tmp_addr;
-	unsigned long new_addr;
-	unsigned char *temp_addr;
+	unsigned char *shadow_addr;
 
-	tmp_addr = addr;
 	for (int i = 0; i < size; i += 8) {
-		new_addr = ((tmp_addr + i) >> 3) + offset;
-		temp_addr = (unsigned char *)new_addr;
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+
 		if (i + 8 < size) {
-			*temp_addr = 0;
+			*shadow_addr = 0;
 		}
 		else {
-			*temp_addr = (*temp_addr >> (i + 8 - size)) << (i + 8 - size);
+			*shadow_addr = (*shadow_addr >> (i + 8 - size)) << (i + 8 - size);
 		}
 	}
-
 	return 0;
-}
-
-// write argument 
-VOID MallocBefore(CHAR * name, ADDRINT size)
-{
-	if (!isMalloced) {
-		malloc_size = size;
-		isMalloced = 1;
-		doingMalloc = 1;
-	}
-}
-
-// erase address when free
-VOID BeforeFree(CHAR * name, ADDRINT addr)
-{
-	if (addr) {
-		free_addr = addr;
-		no_free = 1;
-	}
-}
-
-// write return address
-VOID MallocAfter(ADDRINT ret)
-{
-	int left_over;
-
-	if (isMalloced) {
-//		printf("Malloc Address %p\n", (void *)ret);
-		isMalloced = 0;
-		mlc_size[ret] = malloc_size;
-		/* for align */
-		left_over = 4 - malloc_size % 4;
-
-		markMalloc((unsigned long)ret - byte_size, malloc_size + byte_size * 2 + left_over);
-//		read_map();
-	}
-	doingMalloc = 0;
-}
-
-// after free
-// check if memory mapping has changed
-VOID AfterFree()
-{
-	if (no_free) {
-		unmarkMalloc(free_addr, mlc_size.find(free_addr)->second);
-		mlc_size.erase(free_addr);
-//		read_map();
-		no_free = 0;
-	}
 }
 
