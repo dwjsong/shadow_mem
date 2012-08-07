@@ -101,6 +101,7 @@ static void check_mem_map()
 	ULong tt;
 	struct vki_rlimit rl;
 	struct vki_rlimit rl2;
+	Char temp_line[256];
 	
 	pid = VG_(getpid)();
 	VG_(sprintf)(buff, "%d", pid);
@@ -140,20 +141,21 @@ static void check_mem_map()
 				VG_(strncpy)(prev_line + prev_line_size, line, i);
 				prev_line[prev_line_size + i] = '\x0';
 				prev_line_size += i;
-				VG_(printf)("%s\n", prev_line);
-		//		VG_(printf)("===========================================\n");
+//				VG_(printf)("%s\n", prev_line);
+//				VG_(printf)("===========================================\n");
 				
 				if (!VG_(strncmp)(prev_line + prev_line_size - VG_(strlen)(STACK), STACK, VG_(strlen)(STACK))) {
+//					VG_(printf)("%s\n", temp_line);
 
-					VG_(strncpy)(temp_s, prev_line, 8);
+					VG_(strncpy)(temp_s, temp_line, 8);
 					
 //					stack_range.lower = VG_(strtoull16)(temp_s, NULL);
-					VG_(strncpy)(temp_s2, prev_line + 9, 8);
+					VG_(strncpy)(temp_s2, temp_line + 9, 8);
 					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
 
 					VG_(getrlimit(VKI_RLIMIT_STACK, &rl));
 					VG_(getrlimit(VKI_RLIMIT_DATA, &rl2));
-					stack_range.lower = stack_range.upper - rl.rlim_max;
+					stack_range.lower = stack_range.upper - rl.rlim_cur;
 
 					stack_range.lower_addr = (void *)stack_range.lower;
 					stack_range.upper_addr = (void *)stack_range.upper;
@@ -168,6 +170,7 @@ static void check_mem_map()
 					heap_range.upper = stack_range.lower;
 					heap_range.upper_addr  = (void *)heap_range.upper;
 				}
+				VG_(strcpy)(temp_line, prev_line);
 				VG_(strncpy)(prev_line, line + ++i, buff_size - i);
 				prev_line_size = buff_size - i;
 
@@ -230,7 +233,8 @@ static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 		heap_success.read += count;
 		heap_fail.read += size - count;
 		if (size > count) {
-		 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+//			check_mem_map();
+//		 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
 		}
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
@@ -246,6 +250,7 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 	Int count; 
 	ULong addr_val = (unsigned long) addr;
 
+// 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
 	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.write += size;
 	}
@@ -591,8 +596,8 @@ void post_syscall(ThreadId tid, UInt syscallno,
 	*/
 	switch (syscallno) {
 		case BRK_SYSCALL :
-			VG_(printf)("brk = %p\n", args[0]);
-			VG_(printf)("	brk return = %p\n", res);
+//			VG_(printf)("brk = %p\n", args[0]);
+//			VG_(printf)("	brk return = %p\n", res);
 			addr = (ULong)sr_Res(res);
 
 			if ((ULong)args[0] == 0) {
@@ -605,24 +610,27 @@ void post_syscall(ThreadId tid, UInt syscallno,
 			}
 			else {
 				start = 1;
-			/*
+
 				heap_range.upper = addr;
 				heap_range.upper_addr = (void *)addr;
+
+				markMalloc(heap_range.lower, heap_range.upper - heap_range.lower);
+			/*
 				*/
 			}
 			break;
 
 		case MUNMAP_SYSCALL :
-			VG_(printf)("munmap = %p\n", args[0]);
-			VG_(printf)("	munmap return = %d\n", res);
+//			VG_(printf)("munmap = %p\n", args[0]);
+//			VG_(printf)("	munmap return = %d\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
 			unmarkMalloc(addr, size);
 			break;
 
 		case MMAP_SYSCALL :
-			VG_(printf)("mmap size = %d\n", args[1]);
-			VG_(printf)("	mmap return = %p\n", res);
+//			VG_(printf)("mmap size = %d\n", args[1]);
+//			VG_(printf)("	mmap return = %p\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
 			markMalloc(addr, size);
@@ -649,57 +657,94 @@ static void set_range(void)
 	*/
 }
 
+static void percentify(ULong a, ULong b, char *transformed)
+{
+	ULong c, d;
+
+	c = a * 100 / b;
+	d = (a * 10000 / b) % 100;
+
+	VG_(sprintf)(transformed, "%ld.%0ld%", c, d);
+}
+
 static void pf_fini(Int exitcode)
 {
 	ULong a, b;
-	Int total = stack_count.read + heap_count.read + global_count.read + other_count.read;
+	Int read_total = stack_count.read + heap_count.read + global_count.read + other_count.read;
+	Int write_total = stack_count.write + heap_count.write + global_count.write + other_count.write;
 	Char tmp[10];
 
-	VG_(printf)("Read Total : %d\n", total);
-	
-	VG_(printf)("Stack : %d ()\n", stack_count.read, tmp);
-	VG_(printf)("Heap  : %d ()\n", heap_count.read, tmp);
+
+	VG_(printf)("==============================\n");
+	VG_(printf)("Read \n");
+	percentify(stack_count.read, read_total, tmp);
+	VG_(printf)("Stack : %d ", stack_count.read);
+	VG_(printf)("(%s)\n", tmp);
+	percentify(heap_count.read, read_total, tmp);
+	VG_(printf)("Heap  : %d ", heap_count.read);
+	VG_(printf)("(%s)\n", tmp);
 	VG_(printf)("	Success : %d\n", heap_success.read);
 	VG_(printf)("	Fail : %d\n", heap_fail.read);
-	VG_(printf)("Global : %d (%f)\n", global_count.read, (Float)(100 * global_count.read) / (Float)total);
-	VG_(printf)("Other : %d (%f)\n", other_count.read, (float)(100 * other_count.read / total));
+	percentify(global_count.read, read_total, tmp);
+	VG_(printf)("Global : %d ", global_count.read);
+	VG_(printf)("(%s)\n", tmp);
+	percentify(other_count.read, read_total, tmp);
+	VG_(printf)("Other : %d ", other_count.read);
+	VG_(printf)("(%s)\n", tmp);
+	VG_(printf)("Total : %d\n", read_total);
+	VG_(printf)("==============================\n");
 
 	VG_(printf)("Write\n");
 	
-	VG_(printf)("Stack : %d (%f)\n", stack_count.write, (float)(100 * stack_count.write / total));
-	VG_(printf)("Heap  : %d (%f)\n", heap_count.write, (float)(100 * heap_count.write / total));
+	percentify(stack_count.write, write_total, tmp);
+	VG_(printf)("Stack : %d ", stack_count.write);
+	VG_(printf)("(%s)\n", tmp);
+	percentify(heap_count.write, write_total, tmp);
+	VG_(printf)("Heap  : %d ", heap_count.write);
+	VG_(printf)("(%s)\n", tmp);
 
 	VG_(printf)("	Success : %d\n", heap_success.write);
 	VG_(printf)("	Fail : %d\n", heap_fail.write);
-	VG_(printf)("Global : %d (%f)\n", global_count.write, (float)(100 * global_count.write / total));
-	VG_(printf)("Other : %d (%f)\n", other_count.write, (float)(100 * other_count.write / total));
+	percentify(global_count.write, write_total, tmp);
+	VG_(printf)("Global : %d ", global_count.write);
+	VG_(printf)("(%s)\n", tmp);
+	percentify(other_count.write, write_total, tmp);
+	VG_(printf)("Other : %d ", other_count.write);
+	VG_(printf)("(%s)\n", tmp);
+	VG_(printf)("Total : %d\n", write_total);
+	VG_(printf)("==============================\n");
 }
 
 void new_mem_startup( Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle )
 {
-	VG_(printf)("new mem addr = %p size = %d\n", a, len);
+	//VG_(printf)("new mem addr = %p size = %d\n", a, len);
 	markMalloc(a, len);
 }
 
 void make_mem_undefined_w_tid ( Addr a, SizeT len, ThreadId tid ) 
 {
-	VG_(printf)("undefined addr = %p size = %d\n", a, len);
-	markMalloc(a, len);
+//	VG_(printf)("undefined addr = %p size = %d\n", a, len);
+//	markMalloc(a, len);
 }
 
 void check_write(CorePart part, ThreadId tid, Addr a, SizeT len)
 {
-	VG_(printf)("write %p \n",a);
+//	VG_(printf)("write %p \n",a);
 }
 
 void remap(Addr from, Addr to, SizeT len)
 {
-	VG_(printf)("remap %p \n", from);
+//	VG_(printf)("remap %p \n", from);
 }
 
 void new_mmap(Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle)
 {
-	VG_(printf)("new mmap %p \n", a);
+//	VG_(printf)("new mmap %p \n", a);
+}
+
+void new_mem_stack(Addr a, SizeT len)
+{
+//	VG_(printf)("new stack %p \n", a);
 }
 
 static void pf_pre_clo_init(void)
@@ -726,6 +771,7 @@ static void pf_pre_clo_init(void)
 
 	VG_(track_post_mem_write)	   ( check_write );
 	VG_(track_copy_mem_remap) (remap);
+	VG_(track_new_mem_stack)        ( new_mem_stack );
 
 	set_range();
 	check_mem_map();
