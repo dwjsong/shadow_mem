@@ -9,6 +9,7 @@
 #include <set>
 #include <string.h>
 #include <map>
+#include <signal.h>
 
 #include "syscall_handle.h"
 #include "inst_handle.h"
@@ -50,8 +51,15 @@ VOID Fini(INT32 code, VOID *v)
 	TraceFile.close();
 }
 
+void sig_handler(int sig)
+{
+	printf("False Access to Shadow Memory Detected! Exiting\n");
+	exit(0);
+}
+
 int main(int argc, char *argv[])
 { 
+	signal(SIGSEGV, sig_handler);
     PIN_InitSymbols();
     if (PIN_Init(argc, argv))
     {
