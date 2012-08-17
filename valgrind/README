@@ -1,0 +1,14 @@
+How To
+
+1. Download Valgrind 
+
+  svn co svn://svn.valgrind.org/valgrind/trunk valgrind
+
+2. Copy everything in this folder into valgrind
+
+3.
+
+./autogen.sh
+./configure --prefix=...
+make
+make install

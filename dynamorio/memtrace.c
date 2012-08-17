@@ -26,7 +26,7 @@ typedef struct _mem_ref_t{
     size_t size;
 } mem_ref_t;
 
-#define MAX_NUM_MEM_REFS 8192
+#define MAX_NUM_MEM_REFS 1
 #define MEM_BUF_SIZE (sizeof(mem_ref_t) * MAX_NUM_MEM_REFS)
 
 struct range {
@@ -71,6 +71,7 @@ static void read_map();
 static void print_space();
 static void event_post_syscall(void *drcontext, int sysnum);
 static void event_pre_syscall(void *drcontext, int sysnum);
+static bool event_filter_syscall(void *drcontext, int sysnum);
 static void reserve_shadow_map();
 static void event_thread_init(void *drcontext);
 static void event_thread_exit(void *drcontext);
@@ -94,6 +95,7 @@ dr_init(client_id_t id)
 	reserve_shadow_map();
 	read_map();
 	print_space();
+    dr_register_filter_syscall_event(event_filter_syscall);
 	dr_register_thread_init_event(event_thread_init);
 	dr_register_thread_exit_event(event_thread_exit);
     dr_register_pre_syscall_event(event_pre_syscall);
@@ -110,7 +112,7 @@ static void percentify(unsigned long a, unsigned long b, char *transformed)
 	c = a * 100 / b;
 	d = (a * 10000 / b) % 100;
 
-	sprintf(transformed, "%ld.%0ld%", c, d);
+	sprintf(transformed, "%ld.%0ld\%", c, d);
 }
 
 static void
@@ -119,7 +121,6 @@ event_exit()
 	char tmp[10];
 	int read_total = stack_count.read + heap_count.read + global_count.read + other_count.read;
 	int write_total = stack_count.write + heap_count.write + global_count.write + other_count.write;
-
 
 	dr_fprintf(STDERR, "heap %x %x\n", heap_range.lower_addr, heap_range.upper_addr);
 	dr_fprintf(STDERR, "stack %x %x\n", stack_range.lower_addr, stack_range.upper_addr);
@@ -140,7 +141,7 @@ event_exit()
 	dr_fprintf(STDERR, "Global : %d ", global_count.read);
 	dr_fprintf(STDERR, "(%s)\n", tmp);
 	percentify(other_count.read, read_total, tmp);
-	dr_fprintf("Other : %d ", other_count.read);
+	dr_fprintf(STDERR, "Other : %d ", other_count.read);
 	dr_fprintf(STDERR, "(%s)\n", tmp);
 	dr_fprintf(STDERR, "Total : %d\n", read_total);
 	dr_fprintf(STDERR, "==============================\n");
@@ -158,7 +159,7 @@ event_exit()
 	dr_fprintf(STDERR, "Global : %d ", global_count.write);
 	dr_fprintf(STDERR, "(%s)\n", tmp);
 	percentify(other_count.write, write_total, tmp);
-	dr_fprintf("Other : %d ", other_count.write);
+	dr_fprintf(STDERR, "Other : %d ", other_count.write);
 	dr_fprintf(STDERR, "(%s)\n", tmp);
 	dr_fprintf(STDERR, "Total : %d\n", write_total);
 	dr_fprintf(STDERR, "==============================\n");
@@ -248,14 +249,20 @@ static void trace_load(unsigned long addr, int size)
 	int count;
 	unsigned long addr_val = (unsigned long) addr;
 
+	
 	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
+		dr_fprintf(STDERR, "tl g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		heap_count.read += size;
 		count = check_alloc(addr, size);
 		heap_success.read += count;
 		heap_fail.read += size - count;
+		/*
+		if (size > count)
+			dr_fprintf(STDERR, "load %x %d\n", addr, size);
+		*/
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
@@ -274,10 +281,15 @@ static void trace_store(unsigned long addr, int size)
 		global_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
+		dr_fprintf(STDERR, "ts g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		heap_count.write += size;
 		count = check_alloc(addr, size);
 		heap_success.write += count;
 		heap_fail.write += size - count;
+		/*
+		if (size > count)
+			dr_fprintf(STDERR, "store %x %d\n", addr, size);
+		*/
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
@@ -308,7 +320,7 @@ event_basic_block(void *drcontext, void *tag, instrlist_t *bb,
     if (instr_reads_memory(instr)) {
         for (i = 0; i < instr_num_srcs(instr); i++) {
             if (opnd_is_memory_reference(instr_get_src(instr, i))) {
-                instrument_mem(drcontext, bb, instr, i, false);
+				instrument_mem(drcontext, bb, instr, i, false);
             }
         }
     }
@@ -316,7 +328,7 @@ event_basic_block(void *drcontext, void *tag, instrlist_t *bb,
     if (instr_writes_memory(instr)) {
         for (i = 0; i < instr_num_dsts(instr); i++) {
             if (opnd_is_memory_reference(instr_get_dst(instr, i))) {
-                instrument_mem(drcontext, bb, instr, i, true);
+				instrument_mem(drcontext, bb, instr, i, true);
             }
         }
     }
@@ -416,38 +428,42 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
     instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
     
-    /* jecxz call */
     call  = INSTR_CREATE_label(drcontext);
     opnd1 = opnd_create_instr(call);
     instr = INSTR_CREATE_jecxz(drcontext, opnd1);
-    instrlist_meta_postinsert(ilist, where, instr);
+    instrlist_meta_preinsert(ilist, where, instr);
 
-    /* jump restore to skip clean call */
     restore = INSTR_CREATE_label(drcontext);
     opnd1 = opnd_create_instr(restore);
     instr = INSTR_CREATE_jmp(drcontext, opnd1);
-    instrlist_meta_postinsert(ilist, where, instr);
+    instrlist_meta_preinsert(ilist, where, instr);
 
     /* clean call */
     /* We jump to lean procedure which performs full context switch and 
      * clean call invocation. This is to reduce the code cache size. 
      */
-    instrlist_meta_postinsert(ilist, where, call);
+    instrlist_meta_preinsert(ilist, where, call);
     /* mov restore DR_REG_XCX */
     opnd1 = opnd_create_reg(reg2);
     /* this is the return address for jumping back from lean procedure */
     opnd2 = opnd_create_instr(restore);
     instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
-    instrlist_meta_postinsert(ilist, where, instr);
+    instrlist_meta_preinsert(ilist, where, instr);
     /* jmp code_cache */
     opnd1 = opnd_create_pc(code_cache);
     instr = INSTR_CREATE_jmp(drcontext, opnd1);
-    instrlist_meta_postinsert(ilist, where, instr);
+    instrlist_meta_preinsert(ilist, where, instr);
 
     /* restore %reg */
-    instrlist_meta_postinsert(ilist, where, restore);
+    instrlist_meta_preinsert(ilist, where, restore);
     dr_restore_reg(drcontext, ilist, where, reg1, SPILL_SLOT_2);
     dr_restore_reg(drcontext, ilist, where, reg2, SPILL_SLOT_3);
+}
+
+static bool
+event_filter_syscall(void *drcontext, int sysnum)
+{
+    return true; /* intercept everything */
 }
 
 static void
@@ -456,7 +472,7 @@ event_pre_syscall(void *drcontext, int sysnum)
 	int nm;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
-//	dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
+	dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
 
 	switch (sysnum) {
 	
@@ -489,8 +505,8 @@ int check_alloc(unsigned long addr, int size)
 		//byte-location
 		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
 
-		if (i % 8 == 0)
-			dr_fprintf(STDERR, "check shadow_addr %x %d\n", shadow_addr, *shadow_addr);
+//		if (i % 8 == 0)
+//			dr_fprintf(STDERR, "check shadow_addr %x %d\n", shadow_addr, *shadow_addr);
 
 		//bit-position
 		wh = (addr + i) & 7;
@@ -562,7 +578,7 @@ event_post_syscall(void *drcontext, int sysnum)
 	int tt;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
-//	dr_fprintf(STDERR, "post sysnum %d\n", sysnum);
+	dr_fprintf(STDERR, "post sysnum %d\n", sysnum);
 
 	switch (sysnum) {
 
@@ -581,7 +597,7 @@ event_post_syscall(void *drcontext, int sysnum)
 				heap_range.upper_addr = (void *)ret;
 				markAlloc(heap_range.lower, heap_range.upper - heap_range.lower);
 			}
-			dr_fprintf(STDERR, "	brk %u\n", data->param0);
+			dr_fprintf(STDERR, "brk %u\n", data->param0);
 			dr_fprintf(STDERR, "	ret %x\n", ret);
 
 			break;
@@ -589,7 +605,7 @@ event_post_syscall(void *drcontext, int sysnum)
 		case MMAP_SYSCALL :
 			ret = dr_syscall_get_result(drcontext);
 
-			dr_fprintf(STDERR, "	mmap %u\n", data->param1);
+			dr_fprintf(STDERR, "mmap %u\n", data->param1);
 			dr_fprintf(STDERR, "	ret %x\n", ret);
 
 			markAlloc(ret, data->param1);
@@ -684,8 +700,8 @@ static void read_map()
 					stack_range.lower_addr = (void *)stack_range.lower;
 					stack_range.upper_addr = (void *)stack_range.upper;
 
-					heap_range.upper = stack_range.lower;
-					heap_range.upper_addr  = (void *)heap_range.upper;
+//					heap_range.upper = stack_range.lower;
+//					heap_range.upper_addr  = (void *)heap_range.upper;
 
 //					dr_fprintf(STDERR, "stack %x %x\n", stack_range.lower, stack_range.upper);
 				}

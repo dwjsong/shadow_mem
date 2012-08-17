@@ -3,14 +3,13 @@
 #include "inst_handle.h"
 #include "shadow_map.h"
 
-VOID RecordMemRead(VOID * ip, VOID * addr)
+VOID RecordMemRead(VOID * ip, VOID * addr, UINT32 size)
 {
 	int shadowed;
-	int size = 4;
+//	int size = 4;
 	unsigned char *c;
 	unsigned long addr_val = (unsigned long) addr;
 
-//	printf("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
 	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read += size;
 	}
@@ -20,10 +19,7 @@ VOID RecordMemRead(VOID * ip, VOID * addr)
 		shadowed = checkShadowMap(addr_val, size);
 		heap_success.read += shadowed;
 		heap_fail.read += size - shadowed;
-		/*
-		heap_suc += shadowed;
-		heap_fail += size - shadowed;
-		*/
+//		printf("r g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		if (size > shadowed) {
 		//	printShadowMap(addr_val, size);
 		}
@@ -36,10 +32,10 @@ VOID RecordMemRead(VOID * ip, VOID * addr)
 	}
 }
 
-VOID RecordMemWrite(VOID * ip, VOID * addr)
+VOID RecordMemWrite(VOID * ip, VOID * addr, UINT32 size)
 {
 	int shadowed;
-	int size = 4;
+//	int size = 4;
 	unsigned long addr_val = (unsigned long) addr;
 
 //	printf("g %p %p h %p %p s %p %p a %p\n", global_range.lower_addr, global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
@@ -51,6 +47,7 @@ VOID RecordMemWrite(VOID * ip, VOID * addr)
 		shadowed = checkShadowMap(addr_val, size);
 		heap_success.write += shadowed;
 		heap_fail.write += size - shadowed;
+//		printf("w g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		/*
 		heap_suc += shadowed;
 		heap_fail += size - shadowed;
@@ -79,6 +76,7 @@ VOID load_store_inst(INS ins, VOID *v)
                 ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
                 IARG_INST_PTR,
                 IARG_MEMORYOP_EA, memOp,
+				IARG_UINT32, INS_MemoryReadSize(ins),
                 IARG_END);
 		}
 
@@ -87,6 +85,7 @@ VOID load_store_inst(INS ins, VOID *v)
                 ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
                 IARG_INST_PTR,
                 IARG_MEMORYOP_EA, memOp,
+				IARG_UINT32, INS_MemoryWriteSize(ins),
                 IARG_END);
 		}
 	}

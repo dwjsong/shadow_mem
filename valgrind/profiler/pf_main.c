@@ -108,7 +108,7 @@ static void check_mem_map()
 	VG_(strncpy)(name + 6, buff, VG_(strlen)(buff));
 	VG_(strcat)(name, "/maps");
 
-	VG_(printf)("pid = %s %d\n", name, pid);
+//	VG_(printf)("pid = %s %d\n", name, pid);
 
 	res = VG_(open)(name, 0, 0);
 	fd = (Int) sr_Res(res);
@@ -141,15 +141,11 @@ static void check_mem_map()
 				VG_(strncpy)(prev_line + prev_line_size, line, i);
 				prev_line[prev_line_size + i] = '\x0';
 				prev_line_size += i;
-//				VG_(printf)("%s\n", prev_line);
-//				VG_(printf)("===========================================\n");
 				
 				if (!VG_(strncmp)(prev_line + prev_line_size - VG_(strlen)(STACK), STACK, VG_(strlen)(STACK))) {
-//					VG_(printf)("%s\n", temp_line);
 
 					VG_(strncpy)(temp_s, temp_line, 8);
 					
-//					stack_range.lower = VG_(strtoull16)(temp_s, NULL);
 					VG_(strncpy)(temp_s2, temp_line + 9, 8);
 					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
 
@@ -160,15 +156,6 @@ static void check_mem_map()
 					stack_range.lower_addr = (void *)stack_range.lower;
 					stack_range.upper_addr = (void *)stack_range.upper;
 
-
-/*
-					VG_(printf("limit cur %d\n",rl2.rlim_cur));
-					VG_(printf("limit max %d\n",rl2.rlim_max));
-					*/
-					
-
-					heap_range.upper = stack_range.lower;
-					heap_range.upper_addr  = (void *)heap_range.upper;
 				}
 				VG_(strcpy)(temp_line, prev_line);
 				VG_(strncpy)(prev_line, line + ++i, buff_size - i);
@@ -188,34 +175,12 @@ static void check_mem_map()
 	VG_(close)(name);
 }
 
-static void reserveShadowMemory()
+static void reserve_shadow_memory()
 {
-	Addr a = 0x20000000;
-//	VG_(do_syscall)(__NR_mmap2, NULL, 4096, 0, 0, -1, 0, 0, 0);
-//	vgPlain_do_syscall(1);
-	//PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0, 0, 0);
-//	offset = VG_(do_syscall)(__NR_mmap2, (void *)offset, (SizeT)shadowMemSize, (UInt)PROT_READ | PROT_WRITE, (UInt)MAP_SHARED | MAP_ANONYMOUS, (UInt)-1, (UInt)0);
-//	VG_(printf)("Shadow Memory %p\n", (void *)offset);
-//	offset = (Int) syscall(__NR_mmap2, (void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	/*
-	protect_addr = (void *)((offset >> 3) + offset);
-
-
-	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
-		VG_(printf)("Shadow Memory Protection Error\n");
-	}
-	*/
 }
 
-static void freeShadowMemory()
+static void free_shadow_memory()
 {
-	/*
-	Int ret = munmap((void *)offset, shadowMemSize);
-
-	if (ret < 0)
-		VG_(printf)("Shadow Memory at %p Free Failed!\n", (void *)offset);
-	*/
-	
 }
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
@@ -232,10 +197,7 @@ static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 		count = checkShadowMap(addr, size);
 		heap_success.read += count;
 		heap_fail.read += size - count;
-		if (size > count) {
-//			check_mem_map();
-//		 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
-		}
+//	 	VG_(printf)("r g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
@@ -259,6 +221,7 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 		count = checkShadowMap(addr, size);
 		heap_success.write += count;
 		heap_fail.write += size - count;
+//	 	VG_(printf)("w g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 	}
 	else if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
@@ -477,53 +440,53 @@ Int checkShadowMap(ULong addr, Int size)
 
 	tmp_addr = addr;
 	offset = shadow_map;
-//	if (start)
-//		VG_(printf)("check offset %p shadow_map %p check shadow_map %p offset %p size %d\n", (void *)offset, shadow_map, shadow_map[(tmp_addr >> 3)], (void *)((tmp_addr >> 3) + offset), size);
 
 	for (i = 0; i < size; i++) {
 		idx = (tmp_addr + i) >> 3;
-//		new_addr = offset[(tmp_addr + i) >> 3];
-//		new_addr = ((tmp_addr + i) >> 3) + offset;
-//		temp_addr = (unsigned char *)new_addr;
-//		temp_addr = (unsigned char *)shadow_map[(tmp_addr + i) >> 3];
+
 		wh = (tmp_addr + i) & 7;
+
 		wh = ((shadow_map[idx].bits >> wh) & 1);
-//		VG_(printf)("	heap range %lu %lu %p %p \n", heap_range.lower, heap_range.upper, heap_range.lower_addr, heap_range.upper_addr);
-//		VG_(printf)("	check %p %p %d \n", shadow_map, shadow_map[idx], shadow_map[idx].bits);
+
 		ct += wh;
 	}
 	return ct;
 }
 
-Int unmarkMalloc(ULong addr, Int size)
+Int unmark_alloc(ULong addr, Int size)
 {
 	Int i;
+	Int clr;
 	ULong tmp_addr;
 	ULong new_addr;
-	unsigned char *temp_addr;
+	unsigned char *shadow_addr;
 	ULong offset;
 
 	tmp_addr = addr;
 	offset = shadow_map;
-	// unmark shadow memory by byte
-//	printf("unmark Memory at %p size %d\n", (void *)offset, size);
-	for (i = 0; i < size; i += 8) {
-		new_addr = ((tmp_addr + i) >> 3) + offset;
-		temp_addr = (unsigned char *)new_addr;
-		// if 8 byte is going to be unmarked the shadow memory will be 0
-		if (i + 8 < size) {
-			*temp_addr = 0;
-		}
-		// if less than 8 bytes left
-		else {
-			*temp_addr = (*temp_addr >> (i + 8 - size)) << (i + 8 - size);
-		}
+
+	if (addr % 8 && size > 8) {
+		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
+		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
+		*shadow_addr = (*shadow_addr << clr) >> clr;
+
+		i = clr;
+	}
+
+	for (; i < size - 8; i += 8) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = 0;
+	}
+
+	if (i < size) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
 	}
 
 	return 0;
 }
 
-Int markMalloc(ULong addr, Int size)
+Int mark_alloc(ULong addr, Int size)
 {
 	Int i;
 	char wh;
@@ -535,21 +498,14 @@ Int markMalloc(ULong addr, Int size)
 
 	tmp_addr = addr;
 	offset = shadow_map;
-// 	VG_(printf)("tmp_addr %d\n", (tmp_addr >> 3));
-// 	VG_(printf)("g %lu h %lu %lu s %lu %lu a %lu\n", global_range.upper, heap_range.lower, heap_range.upper, stack_range.lower, stack_range.upper, addr);
-// 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
-// 	VG_(printf)("offset %p shadow_map %p check shadow_map %p offset %p size %d\n", (void *)offset, shadow_map, shadow_map[(tmp_addr >> 3)], (void *)((tmp_addr >> 3) + offset), size);
 
 	for (i = 0; i < size; i++) {
+
 		idx = (tmp_addr + i) >> 3;
-//		new_addr = offset[(tmp_addr + i) >> 3];
-//		new_addr = ((tmp_addr + i) >> 3) + offset;
-//		temp_addr = (unsigned char *)new_addr;
-//		temp_addr = (unsigned char *)shadow_map[(tmp_addr + i) >> 3];
+
 		wh = (tmp_addr + i) & 7;
-//		VG_(printf)("	check %p %d %d %p %p %d\n", (void *)offset, (tmp_addr+i)shadow_map[(tmp_addr+i)>>3], (tmp_addr + i), temp_addr, *temp_addr);
+
 		shadow_map[idx].bits = shadow_map[idx].bits | (1 << wh);
-//		VG_(printf)("	mark %p %p %d \n", shadow_map, shadow_map[idx], shadow_map[idx].bits);
 	}
 	return 0;
 }
@@ -557,29 +513,6 @@ Int markMalloc(ULong addr, Int size)
 static void pre_syscall(ThreadId tid, UInt syscallno,
                            UWord* args, UInt nArgs)
 {
-/*
-	VG_(printf)("Before syscall\n");
-	check_mem_map();
-	VG_(printf)("===========================================\n");
-	*/
-/*
-	Int h;
-
-	switch (syscallno) {
-		case BRK_SYSCALL :
-			VG_(printf)("brk = %p\n", args[0]);
-			break;
-
-		case MUNMAP_SYSCALL :
-			VG_(printf)("munmap = %p\n", args[0]);
-			break;
-
-		case MMAP_SYSCALL :
-			VG_(printf)("mmap size = %d\n", args[1]);
-			break;
-
-	}
-	*/
 }
 
 static
@@ -589,11 +522,6 @@ void post_syscall(ThreadId tid, UInt syscallno,
 	ULong addr;
 	Int size;
 
-/*
-	VG_(printf)("After syscall\n");
-	check_mem_map();
-	VG_(printf)("syscall = %d\n", syscallno);
-	*/
 	switch (syscallno) {
 		case BRK_SYSCALL :
 //			VG_(printf)("brk = %p\n", args[0]);
@@ -601,7 +529,6 @@ void post_syscall(ThreadId tid, UInt syscallno,
 			addr = (ULong)sr_Res(res);
 
 			if ((ULong)args[0] == 0) {
-//				check_mem_map();
 				global_range.upper = addr;
 				global_range.upper_addr = (void *)addr;
 
@@ -614,9 +541,7 @@ void post_syscall(ThreadId tid, UInt syscallno,
 				heap_range.upper = addr;
 				heap_range.upper_addr = (void *)addr;
 
-				markMalloc(heap_range.lower, heap_range.upper - heap_range.lower);
-			/*
-				*/
+				mark_alloc(heap_range.lower, heap_range.upper - heap_range.lower);
 			}
 			break;
 
@@ -625,7 +550,7 @@ void post_syscall(ThreadId tid, UInt syscallno,
 //			VG_(printf)("	munmap return = %d\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
-			unmarkMalloc(addr, size);
+			unmark_alloc(addr, size);
 			break;
 
 		case MMAP_SYSCALL :
@@ -633,7 +558,7 @@ void post_syscall(ThreadId tid, UInt syscallno,
 //			VG_(printf)("	mmap return = %p\n", res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
-			markMalloc(addr, size);
+			mark_alloc(addr, size);
 			break;
 
 	}
@@ -644,17 +569,6 @@ static void set_range(void)
 	global_range.lower = 0x08048000;
 	global_range.lower_addr = (void *)global_range.lower;
 
-/*
-	stack_range.upper = 0xc0000000;
-	stack_range.upper_addr = (void *)stack_range.upper;
-	stack_range.lower = 0xbf000000;
-	stack_range.lower_addr = (void *)stack_range.lower;
-	*/
-
-/*
-	heap_range.upper = 0xbf000000;
-	heap_range.upper_addr = (void *)heap_range.upper;
-	*/
 }
 
 static void percentify(ULong a, ULong b, char *transformed)
@@ -718,7 +632,7 @@ static void pf_fini(Int exitcode)
 void new_mem_startup( Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle )
 {
 	//VG_(printf)("new mem addr = %p size = %d\n", a, len);
-	markMalloc(a, len);
+	mark_alloc(a, len);
 }
 
 void make_mem_undefined_w_tid ( Addr a, SizeT len, ThreadId tid ) 

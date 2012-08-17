@@ -1,0 +1,18 @@
+How To
+
+1. Download Dynamorio
+
+	wget http://dynamorio.googlecode.com/files/DynamoRIO-Linux-3.2.0-3.tar.gz
+
+	tar -xvf DynamoRIO-Linux-3.2.0-3.tar.gz
+
+2. Copy memtrace.c
+
+	cp memtrace.c DynamoRIO-Linux-3.2.0-3/samples
+
+3. compile
+
+	cd DynamoRIO-Linux-3.2.0-3/samples
+	cmake .
+	make
+

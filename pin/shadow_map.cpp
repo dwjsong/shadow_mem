@@ -200,9 +200,33 @@ int printShadowMap(unsigned long addr, int size)
  */
 int markAlloc(unsigned long addr, int size)
 {
+	int i;
+	int clr;
 	char wh;
 	unsigned char *shadow_addr;
 
+/*
+	// unmark till 8 byte align
+	if (addr % 8) { 
+		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
+		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
+		*shadow_addr = (*shadow_addr << clr) >> clr;
+
+		i = clr;
+	}
+
+	// unmark by byte ( 1 byte shadow mem = 8 byte )
+	for (; i < size - 8; i += 8) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = 0;
+	}
+
+	// unmark leftovers
+	if (i < size) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
+	}
+*/
 	for (int i = 0; i < size; i++) {
 		//getting byte-location
 		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);	
@@ -217,18 +241,28 @@ int markAlloc(unsigned long addr, int size)
 // unmark deallocation
 int unmarkAlloc(unsigned long addr, int size)
 {
+	int i;
+	int clr;
 	unsigned char *shadow_addr;
 
-	for (int i = 0; i < size; i += 8) {
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+	if (addr % 8 && size > 8) {
+		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
+		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
+		*shadow_addr = (*shadow_addr << clr) >> clr;
 
-		if (i + 8 < size) {
-			*shadow_addr = 0;
-		}
-		else {
-			*shadow_addr = (*shadow_addr >> (i + 8 - size)) << (i + 8 - size);
-		}
+		i = clr;
 	}
+
+	for (; i < size - 8; i += 8) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = 0;
+	}
+
+	if (i < size) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
+	}
+
 	return 0;
 }
 
