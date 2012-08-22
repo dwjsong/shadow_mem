@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <signal.h>
 
 #ifdef LINUX
 # include <syscall.h>
@@ -84,6 +85,7 @@ static void code_cache_exit(void);
 int check_alloc(unsigned long addr, int size);
 static void trace_load(unsigned long addr, int size);
 static void trace_store(unsigned long addr, int size);
+static dr_signal_action_t event_signal(void *drcontext, dr_siginfo_t *info);
 
 unsigned long offset = 0x20000000;;
 static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;
@@ -102,9 +104,20 @@ dr_init(client_id_t id)
     dr_register_post_syscall_event(event_post_syscall);
 	dr_register_bb_event(event_basic_block);
 	dr_register_exit_event(event_exit);
+    dr_register_signal_event(event_signal);
     code_cache_init();
 }
 
+static
+dr_signal_action_t event_signal(void *drcontext, dr_siginfo_t *info)
+{
+    if (info->sig == SIGSEGV) {
+		dr_fprintf(STDERR, "Shadow Memory Write Error!\n");
+		exit(0);
+    }
+
+    return DR_SIGNAL_DELIVER;
+}
 static void percentify(unsigned long a, unsigned long b, char *transformed)
 {
 	unsigned long c, d;
@@ -254,7 +267,7 @@ static void trace_load(unsigned long addr, int size)
 		global_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		dr_fprintf(STDERR, "tl g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
+//		dr_fprintf(STDERR, "r g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		heap_count.read += size;
 		count = check_alloc(addr, size);
 		heap_success.read += count;
@@ -281,7 +294,7 @@ static void trace_store(unsigned long addr, int size)
 		global_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
-		dr_fprintf(STDERR, "ts g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
+//		dr_fprintf(STDERR, "w g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 		heap_count.write += size;
 		count = check_alloc(addr, size);
 		heap_success.write += count;
@@ -472,7 +485,7 @@ event_pre_syscall(void *drcontext, int sysnum)
 	int nm;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
-	dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
+	//dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
 
 	switch (sysnum) {
 	
@@ -578,7 +591,7 @@ event_post_syscall(void *drcontext, int sysnum)
 	int tt;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
-	dr_fprintf(STDERR, "post sysnum %d\n", sysnum);
+//	dr_fprintf(STDERR, "post sysnum %d\n", sysnum);
 
 	switch (sysnum) {
 
@@ -605,8 +618,8 @@ event_post_syscall(void *drcontext, int sysnum)
 		case MMAP_SYSCALL :
 			ret = dr_syscall_get_result(drcontext);
 
-			dr_fprintf(STDERR, "mmap %u\n", data->param1);
-			dr_fprintf(STDERR, "	ret %x\n", ret);
+			dr_fprintf(STDERR, "mmap %u %x\n", data->param1, ret);
+	//		dr_fprintf(STDERR, "	ret %x\n", ret);
 
 			markAlloc(ret, data->param1);
 
