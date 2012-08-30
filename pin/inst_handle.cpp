@@ -3,7 +3,9 @@
 #include "inst_handle.h"
 #include "shadow_map.h"
 
-VOID RecordMemRead(VOID * ip, VOID * addr, UINT32 size)
+BUFFER_ID bufid;
+
+VOID RecordMemRead(VOID * ip, ADDRINT addr, UINT32 size)
 {
 	int shadowed;
 //	int size = 4;
@@ -32,7 +34,7 @@ VOID RecordMemRead(VOID * ip, VOID * addr, UINT32 size)
 	}
 }
 
-VOID RecordMemWrite(VOID * ip, VOID * addr, UINT32 size)
+VOID RecordMemWrite(VOID * ip, ADDRINT  addr, UINT32 size)
 {
 	int shadowed;
 //	int size = 4;
@@ -66,27 +68,66 @@ VOID RecordMemWrite(VOID * ip, VOID * addr, UINT32 size)
 //	printf("%p: W %p\n", ip, addr);
 }
 
+VOID* BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf, UINT64 numElts, VOID *v)
+{
+	struct memref* ref = (struct memref*)buf;
+
+	for (UINT32 i = 0; i < numElts; i++, ref++) {
+//		printf("	full %p\n", ref->addr);
+		if (ref->write) 
+			RecordMemWrite(ref->ip, ref->addr, ref->size);
+		else
+			RecordMemRead(ref->ip, ref->addr, ref->size);
+	}
+
+	VOID * newbuf = PIN_AllocateBuffer(id);
+	PIN_DeallocateBuffer(id, buf);
+
+	return newbuf;
+}
+
 VOID load_store_inst(INS ins, VOID *v)
 {
 	UINT32 memOperands = INS_MemoryOperandCount(ins);
 
 	for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
 		if (INS_MemoryOperandIsRead(ins, memOp)) {
+		/*
 			INS_InsertPredicatedCall(
                 ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
                 IARG_INST_PTR,
                 IARG_MEMORYOP_EA, memOp,
 				IARG_UINT32, INS_MemoryReadSize(ins),
                 IARG_END);
+		*/
+
+			INS_InsertFillBufferPredicated(ins, IPOINT_BEFORE, bufid,
+				IARG_INST_PTR, offsetof(struct memref, ip),
+                IARG_MEMORYOP_EA, memOp, offsetof(struct memref, addr),
+				IARG_UINT32, INS_MemoryReadSize(ins), offsetof(struct memref, size),
+				IARG_UINT32, 0, offsetof(struct memref, write),
+                IARG_END);
+//				*/
 		}
 
 		if (INS_MemoryOperandIsWritten(ins, memOp)) {
+		/*
 			INS_InsertPredicatedCall(
                 ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
                 IARG_INST_PTR,
                 IARG_MEMORYOP_EA, memOp,
 				IARG_UINT32, INS_MemoryWriteSize(ins),
                 IARG_END);
+		*/
+///*
+
+			INS_InsertFillBufferPredicated(ins, IPOINT_BEFORE, bufid,
+				IARG_INST_PTR, offsetof(struct memref, ip),
+                IARG_MEMORYOP_EA, memOp, offsetof(struct memref, addr),
+				IARG_UINT32, INS_MemoryWriteSize(ins), offsetof(struct memref, size),
+				IARG_UINT32, 1, offsetof(struct memref, write),
+                IARG_END);
+//		*/
 		}
 	}
 }
