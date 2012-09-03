@@ -71,7 +71,7 @@ static app_pc code_cache;
 static void read_map();
 static void print_space();
 static void event_post_syscall(void *drcontext, int sysnum);
-static void event_pre_syscall(void *drcontext, int sysnum);
+static bool event_pre_syscall(void *drcontext, int sysnum);
 static bool event_filter_syscall(void *drcontext, int sysnum);
 static void reserve_shadow_map();
 static void event_thread_init(void *drcontext);
@@ -125,7 +125,7 @@ static void percentify(unsigned long a, unsigned long b, char *transformed)
 	c = a * 100 / b;
 	d = (a * 10000 / b) % 100;
 
-	sprintf(transformed, "%ld.%0ld\%", c, d);
+	sprintf(transformed, "%ld.%0ld", c, d);
 }
 
 static void
@@ -245,9 +245,9 @@ static void memtrace(void *drcontext)
 
     for (i = 0; i < num_refs; i++) {
 		if (mem_ref->write)
-			trace_store(mem_ref->addr, mem_ref->size);
+			trace_store((unsigned long) mem_ref->addr, mem_ref->size);
 		else
-			trace_load(mem_ref->addr, mem_ref->size);
+			trace_load((unsigned long)mem_ref->addr, mem_ref->size);
         ++mem_ref;
     }
 
@@ -323,7 +323,7 @@ event_basic_block(void *drcontext, void *tag, instrlist_t *bb,
 				  bool for_trace, bool translating)
 {
 	int i;
-	instr_t *instr, *next_instr;
+	instr_t *instr;
 
 	instr = instrlist_first(bb);
 
@@ -479,10 +479,9 @@ event_filter_syscall(void *drcontext, int sysnum)
     return true; /* intercept everything */
 }
 
-static void
+static bool
 event_pre_syscall(void *drcontext, int sysnum)
 {
-	int nm;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
 	//dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
@@ -505,7 +504,7 @@ event_pre_syscall(void *drcontext, int sysnum)
 //			dr_fprintf(STDERR, "	mmap %u\n", nm);
 			break;
 	}
-
+	return true;
 }
 
 int check_alloc(unsigned long addr, int size)
@@ -533,7 +532,7 @@ int check_alloc(unsigned long addr, int size)
 
 int markAlloc(unsigned long addr, int size)
 {
-	int i, ct = 0;
+	int i;
 	char wh;
 	unsigned char *shadow_addr;
 
@@ -556,7 +555,7 @@ int markAlloc(unsigned long addr, int size)
 
 int unmarkAlloc(unsigned long addr, int size)
 {
-	int i;
+	int i = 0;
 	int clr;
 	unsigned char *shadow_addr;
 
@@ -584,11 +583,7 @@ int unmarkAlloc(unsigned long addr, int size)
 static void
 event_post_syscall(void *drcontext, int sysnum)
 {
-	int size;
-	unsigned int param;
 	unsigned long ret;
-	int *addr;
-	int tt;
 	per_thread_t *data = (per_thread_t *)dr_get_tls_field(drcontext);
 
 //	dr_fprintf(STDERR, "post sysnum %d\n", sysnum);
@@ -642,21 +637,17 @@ static void print_space()
 
 static void read_map()
 {
-	int t;
 	int i;
 	int buff_size;
 	int read_size = 32;
 	int made_line;
 	int prev_line_size;
 	FILE *proc_map;
-	struct range temp;
 	char buff[10];
 	char name[20] = "/proc/";
 	char line[256];
 	char prev_line[256];
 	char temp_line[256];
-	char temp_s[16];
-	char temp_s2[16];
 	struct rlimit limit;
 	struct rlimit rl;
 	struct rlimit rl2;
@@ -703,7 +694,7 @@ static void read_map()
 				
 				if (!strncmp(prev_line + prev_line_size - strlen(STACK), STACK, strlen(STACK))) {
 
-					sscanf(prev_line, "%x-%x", &stack_range.lower, &stack_range.upper);
+					sscanf(prev_line, "%x-%x", (unsigned int *)&stack_range.lower, (unsigned int *)&stack_range.upper);
 //					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
 
 					getrlimit(RLIMIT_STACK, &rl);
@@ -719,7 +710,8 @@ static void read_map()
 //					dr_fprintf(STDERR, "stack %x %x\n", stack_range.lower, stack_range.upper);
 				}
 				strcpy(temp_line, prev_line);
-				strncpy(prev_line, line + ++i, buff_size - i);
+				i++;
+				strncpy(prev_line, line + i, buff_size - i);
 				prev_line_size = buff_size - i;
 
 				break;

@@ -1,18 +1,27 @@
 How To
 
-1. Download Dynamorio
+1. Install Dependencies
 
-	wget http://dynamorio.googlecode.com/files/DynamoRIO-Linux-3.2.0-3.tar.gz
+	sudo apt-get install cmake ia32-libs g++ g++-multilib doxygen transfig imagemagick ghostscript subversion
 
-	tar -xvf DynamoRIO-Linux-3.2.0-3.tar.gz
+2. Download Dynamorio
 
-2. Copy memtrace.c
+	svn checkout http://dynamorio.googlecode.com/svn/trunk/ dynamorio
 
-	cp memtrace.c DynamoRIO-Linux-3.2.0-3/samples
+3. Copy memtrace.c
 
-3. compile
+	cp memtrace.c dynamorio/api/samples/memtrace.c 
 
-	cd DynamoRIO-Linux-3.2.0-3/samples
-	cmake .
-	make
+4. compile
+
+	cd dynamorio && mkdir build && cd build
+	cmake ..
+	make -j
+
+5. run instruction count & memtrace
+
+
+	./bin32/drrun -client api/samples/bin/libinscount.so 0x1 "" /bin/ls
+
+	./bin32/drrun -client api/samples/bin/libmemtrace.so 0x1 "" /bin/ls
 
