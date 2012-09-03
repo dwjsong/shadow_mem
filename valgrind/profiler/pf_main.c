@@ -6,6 +6,7 @@
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcfile.h"
 #include "pub_tool_vki.h"
+#include "pub_tool_aspacemgr.h"
 
 #include "config.h"
 
@@ -24,10 +25,11 @@ typedef struct {
 	unsigned char bits;
 } Shadow;
 
-Shadow shadow_map[402653184];
-//unsigned Int offset = 0x20000000;
+Addr reserve_map;
 
 Int xx = 0;
+Int stt = 0;
+Int map_size = 402653184;
 
 //static const ULong shadowMemSize = 1024 * 1024 * 128 * 3;
 static const ULong shadowMemSize = 1024;
@@ -177,10 +179,14 @@ static void check_mem_map()
 
 static void reserve_shadow_memory()
 {
+	reserve_map = VG_(am_shadow_alloc)(map_size);
+
+	VG_(printf)("reserve %p\n", reserve_map);
 }
 
 static void free_shadow_memory()
 {
+	VG_(am_munmap_valgrind)(reserve_map, map_size);
 }
 
 static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
@@ -188,6 +194,7 @@ static VG_REGPARM(2) void trace_load(Addr addr, SizeT size)
 	Int count;
 	ULong addr_val = (unsigned long) addr;
 
+//	if (!stt) return;
 // 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
 	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read += size;
@@ -213,6 +220,7 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 	ULong addr_val = (unsigned long) addr;
 
 // 	VG_(printf)("g %p h %p %p s %p %p a %p\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr);
+//	if (!stt) return;
 	if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.write += size;
 	}
@@ -298,7 +306,7 @@ static void pf_post_clo_init(void)
 {
 }
 
-	static
+static
 IRSB* pf_instrument ( VgCallbackClosure* closure,
 		IRSB* sbIn,
 		VexGuestLayout* layout, 
@@ -431,22 +439,17 @@ Int checkShadowMap(ULong addr, Int size)
 {
 	Int i;
 	Int ct = 0;
-	Int idx;
-	char wh;
-	ULong tmp_addr;
-	ULong new_addr;
-	unsigned char *temp_addr;
-	ULong offset;
-
-	tmp_addr = addr;
-	offset = shadow_map;
+	Char wh;
+	Addr idAddr;
+	UChar *t;
 
 	for (i = 0; i < size; i++) {
-		idx = (tmp_addr + i) >> 3;
+		idAddr = ((addr + i) >> 3) + reserve_map;
+		t = idAddr;
 
-		wh = (tmp_addr + i) & 7;
+		wh = (addr + i) & 7;
 
-		wh = ((shadow_map[idx].bits >> wh) & 1);
+		wh = ((*t  >> wh) & 1);
 
 		ct += wh;
 	}
@@ -455,32 +458,31 @@ Int checkShadowMap(ULong addr, Int size)
 
 Int unmark_alloc(ULong addr, Int size)
 {
-	Int i;
+	Int i = 0;
 	Int clr;
-	ULong tmp_addr;
-	ULong new_addr;
-	unsigned char *shadow_addr;
-	ULong offset;
-
-	tmp_addr = addr;
-	offset = shadow_map;
+	Addr idAddr;
+	UChar *t;
 
 	if (addr % 8 && size > 8) {
-		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
+		idAddr = (addr >> 3) + reserve_map;
+		t = idAddr;
+
 		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
-		*shadow_addr = (*shadow_addr << clr) >> clr;
+		*t = (*t << clr) >> clr;
 
 		i = clr;
 	}
 
 	for (; i < size - 8; i += 8) {
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
-		*shadow_addr = 0;
+		idAddr = ((addr + i) >> 3) + reserve_map;
+		t = idAddr;
+		*t = 0;
 	}
 
 	if (i < size) {
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
-		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
+		idAddr = ((addr + i) >> 3) + reserve_map;
+		t = idAddr;
+		*t = (*t >> (size - i)) << (size - i);
 	}
 
 	return 0;
@@ -489,23 +491,19 @@ Int unmark_alloc(ULong addr, Int size)
 Int mark_alloc(ULong addr, Int size)
 {
 	Int i;
-	char wh;
-	Int idx;
-	ULong tmp_addr;
-	ULong new_addr;
-	unsigned char *temp_addr;
-	ULong offset;
-
-	tmp_addr = addr;
-	offset = shadow_map;
+	Char wh;
+	UChar *t;
+	Addr idAddr;
 
 	for (i = 0; i < size; i++) {
 
-		idx = (tmp_addr + i) >> 3;
+		idAddr = ((addr + i) >> 3) + reserve_map;
 
-		wh = (tmp_addr + i) & 7;
+		wh = (addr + i) & 7;
 
-		shadow_map[idx].bits = shadow_map[idx].bits | (1 << wh);
+		t = idAddr;
+
+		*t = *t | (1 << wh);
 	}
 	return 0;
 }
@@ -525,7 +523,7 @@ void post_syscall(ThreadId tid, UInt syscallno,
 	switch (syscallno) {
 		case BRK_SYSCALL :
 //			VG_(printf)("brk = %p\n", args[0]);
-//			VG_(printf)("	brk return = %p\n", res);
+			VG_(printf)("brk ret %d %p\n", args[0], res);
 			addr = (ULong)sr_Res(res);
 
 			if ((ULong)args[0] == 0) {
@@ -554,8 +552,9 @@ void post_syscall(ThreadId tid, UInt syscallno,
 			break;
 
 		case MMAP_SYSCALL :
-//			VG_(printf)("mmap size = %d\n", args[1]);
-//			VG_(printf)("	mmap return = %p\n", res);
+			//VG_(printf)("mmap size = %d\n", args[1]);
+			if (args[1] == 4096) stt = 1;
+			VG_(printf)("mmap ret %d %p\n", args[1], res);
 			addr = (ULong)sr_Res(res);
 			size = args[1];
 			mark_alloc(addr, size);
@@ -631,7 +630,7 @@ static void pf_fini(Int exitcode)
 
 void new_mem_startup( Addr a, SizeT len, Bool rr, Bool ww, Bool xx, ULong di_handle )
 {
-	//VG_(printf)("new mem addr = %p size = %d\n", a, len);
+//	VG_(printf)("new mem addr = %p size = %d\n", a, len);
 	mark_alloc(a, len);
 }
 
@@ -689,7 +688,7 @@ static void pf_pre_clo_init(void)
 
 	set_range();
 	check_mem_map();
-	//reserveShadowMemory();
+	reserve_shadow_memory();
 }
 
 VG_DETERMINE_INTERFACE_VERSION(pf_pre_clo_init)
