@@ -36,6 +36,8 @@ struct access_count other_count;
 struct access_count heap_count;
 struct access_count global_count;
 
+struct access_count tot_count[4];
+
 struct access_count heap_success;
 struct access_count heap_fail;
 
@@ -55,10 +57,11 @@ int byte_size = 4;
 int malloc_size;
 int no_free;
 
+char area[786432];
+
 // read /proc/pid/maps to get memory mapping
 void read_map()
 {
-	int t;
 	ifstream proc_map;
 	struct range temp;
 	char buff[10];
@@ -96,6 +99,9 @@ void read_map()
 				stack_range = temp;
 				stack_range.lower = stack_range.upper - limit.rlim_cur;
 				stack_range.lower_addr = (void *)stack_range.lower;
+
+				for (unsigned long i = stack_range.lower / 4096; i < stack_range.upper / 4096; i++)
+					area[i] = 3;
 //				printf("%p %p\n",stack_range.lower_addr, stack_range.upper_addr);
 //				scanf("%d",&t);
 //			}
@@ -155,13 +161,34 @@ void freeShadowMemory()
 
 int checkShadowMap(unsigned long addr, int size)
 {
+	int i = 0;
 	int ct = 0;
 	char wh;
 	unsigned char *shadow_addr;
 
+/*
+	if (addr % 8 && size > 8) {
+		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
+		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
+		*shadow_addr = (*shadow_addr << clr) >> clr;
+
+		i = clr;
+	}
+
+	for (; i < size - 8; i += 8) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = 0;
+	}
+
+	if (i < size) {
+		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
+		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
+	}
+	*/
+//	shadow_addr = (unsigned char *) (((addr) >> 3) + offset);
+	/*
 	for (int i = 0; i < size; i++) {
 		//byte-location
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
 
 		//bit-position
 		wh = (addr + i) & 7;
@@ -170,6 +197,7 @@ int checkShadowMap(unsigned long addr, int size)
 		wh = (*shadow_addr >> wh) & 1;
 		ct += wh;
 	}
+		*/
 	return ct;
 }
 
@@ -200,11 +228,10 @@ int printShadowMap(unsigned long addr, int size)
  */
 int markAlloc(unsigned long addr, int size)
 {
-	int i;
-	int clr;
 	char wh;
 	unsigned char *shadow_addr;
 
+//	return 0;
 /*
 	// unmark till 8 byte align
 	if (addr % 8) { 
@@ -241,10 +268,11 @@ int markAlloc(unsigned long addr, int size)
 // unmark deallocation
 int unmarkAlloc(unsigned long addr, int size)
 {
-	int i;
+	int i = 0;
 	int clr;
 	unsigned char *shadow_addr;
 
+//	return 0;
 	if (addr % 8 && size > 8) {
 		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
 		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
