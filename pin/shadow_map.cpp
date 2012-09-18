@@ -166,27 +166,7 @@ int checkShadowMap(unsigned long addr, int size)
 	char wh;
 	unsigned char *shadow_addr;
 
-/*
-	if (addr % 8 && size > 8) {
-		shadow_addr = (unsigned char *) ((addr >> 3) + offset);
-		clr = ((8 - (addr % 8)) > size) ? (8 - (addr % 8)) : size;
-		*shadow_addr = (*shadow_addr << clr) >> clr;
-
-		i = clr;
-	}
-
-	for (; i < size - 8; i += 8) {
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
-		*shadow_addr = 0;
-	}
-
-	if (i < size) {
-		shadow_addr = (unsigned char *) (((addr + i) >> 3) + offset);
-		*shadow_addr = (*shadow_addr >> (size - i)) << (size - i);
-	}
-	*/
-//	shadow_addr = (unsigned char *) (((addr) >> 3) + offset);
-	/*
+	shadow_addr = (unsigned char *) (((addr) >> 3) + offset);
 	for (int i = 0; i < size; i++) {
 		//byte-location
 
@@ -197,7 +177,6 @@ int checkShadowMap(unsigned long addr, int size)
 		wh = (*shadow_addr >> wh) & 1;
 		ct += wh;
 	}
-		*/
 	return ct;
 }
 
