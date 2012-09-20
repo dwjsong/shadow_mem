@@ -10,104 +10,51 @@
 #include <stdio.h>
 #include <signal.h>
 
-#ifdef LINUX
-# include <syscall.h>
-#endif
+#include "shadow_map.h"
+#include "memtrace.h"
 
-#define BRK_SYSCALL 45
-#define MUNMAP_SYSCALL 91
-#define MMAP_SYSCALL 192
-
-#define STACK "[stack]"
-#define HEAP "[heap]"
-
-typedef struct _mem_ref_t{
-    bool  write;
-    void *addr;
-    size_t size;
-} mem_ref_t;
-
-#define MAX_NUM_MEM_REFS 1
-#define MEM_BUF_SIZE (sizeof(mem_ref_t) * MAX_NUM_MEM_REFS)
-
-struct range {
-	unsigned long lower;
-	unsigned long upper;
-
-	void *lower_addr;
-	void *upper_addr;
-};
-
-typedef struct {
-	int param0;
-	int param1;
-
-    char   *buf_ptr;
-    char   *buf_base;
-    ptr_int_t buf_end; 
-    uint64  num_refs;
-} per_thread_t;
-
-struct access_count {
-	unsigned long read;
-	unsigned long write;
-};
-
-struct access_count stack_count;
-struct access_count other_count;
-struct access_count heap_count;
-struct access_count global_count;
-struct access_count heap_success;
-struct access_count heap_fail;
-
-struct range heap_range;
-struct range stack_range;
-struct range global_range;
-
-unsigned long syscall_param;
-
-static app_pc code_cache;
-
-static void read_map();
-static void print_space();
-static void event_post_syscall(void *drcontext, int sysnum);
-static bool event_pre_syscall(void *drcontext, int sysnum);
-static bool event_filter_syscall(void *drcontext, int sysnum);
-static void reserve_shadow_map();
-static void event_thread_init(void *drcontext);
-static void event_thread_exit(void *drcontext);
-static void event_exit();
-static dr_emit_flags_t event_basic_block(void *drcontext, void *tag, instrlist_t *bb, bool for_trace, bool translating);
-static void instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where, int pos, bool write);
-static void clean_call(void);
-static void code_cache_init(void);
-static void code_cache_exit(void);
-int check_alloc(unsigned long addr, int size);
-static void trace_load(unsigned long addr, int size);
-static void trace_store(unsigned long addr, int size);
-static dr_signal_action_t event_signal(void *drcontext, dr_siginfo_t *info);
-
+/* 
+ * Global variables
+ */
 unsigned long offset = 0x20000000;;
 static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;
 pid_t pid;
 
+/*
+ * Function body begins
+ */
+
 DR_EXPORT void 
 dr_init(client_id_t id)
 {
+  //shared memory space init
 	reserve_shadow_map();
 	read_map();
 	print_space();
-    dr_register_filter_syscall_event(event_filter_syscall);
+
+    //thread init/exit
 	dr_register_thread_init_event(event_thread_init);
 	dr_register_thread_exit_event(event_thread_exit);
+
+    //syscall instrumentation
+    dr_register_filter_syscall_event(event_filter_syscall);
     dr_register_pre_syscall_event(event_pre_syscall);
     dr_register_post_syscall_event(event_post_syscall);
+
+    //main instrumation
 	dr_register_bb_event(event_basic_block);
-	dr_register_exit_event(event_exit);
+    
+    //registering signal handling
     dr_register_signal_event(event_signal);
+
+	dr_register_exit_event(event_exit);
     code_cache_init();
 }
 
+
+/*
+ * Signal handler
+ */
 static
 dr_signal_action_t event_signal(void *drcontext, dr_siginfo_t *info)
 {
@@ -118,17 +65,8 @@ dr_signal_action_t event_signal(void *drcontext, dr_siginfo_t *info)
 
     return DR_SIGNAL_DELIVER;
 }
-static void percentify(unsigned long a, unsigned long b, char *transformed)
-{
-	unsigned long c, d;
 
-	c = a * 100 / b;
-	d = (a * 10000 / b) % 100;
-
-	sprintf(transformed, "%ld.%0ld", c, d);
-}
-
-static void
+static void 
 event_exit()
 {
 	char tmp[10];
@@ -198,17 +136,22 @@ code_cache_init(void)
                                   DR_MEMPROT_READ  |
                                   DR_MEMPROT_WRITE |
                                   DR_MEMPROT_EXEC);
+
     ilist = instrlist_create(drcontext);
+
     /* The lean procecure simply performs a clean call, and then jump back */
     /* jump back to the DR's code cache */
     where = INSTR_CREATE_jmp_ind(drcontext, opnd_create_reg(DR_REG_XCX));
     instrlist_meta_append(ilist, where);
+
     /* clean call */
     dr_insert_clean_call(drcontext, ilist, where, (void *)clean_call, false, 0);
+
     /* Encodes the instructions into memory and then cleans up. */
     end = instrlist_encode(drcontext, ilist, code_cache, false);
     DR_ASSERT((end - code_cache) < PAGE_SIZE);
     instrlist_clear_and_destroy(drcontext, ilist);
+
     /* set the memory as just +rx now */
     dr_memory_protect(code_cache, PAGE_SIZE, DR_MEMPROT_READ | DR_MEMPROT_EXEC);
 }
@@ -310,12 +253,6 @@ static void trace_store(unsigned long addr, int size)
 	else {
 		other_count.write += size;
 	}
-}
-static void
-clean_call(void)
-{
-    void *drcontext = dr_get_current_drcontext();
-    memtrace(drcontext);
 }
 
 static dr_emit_flags_t
@@ -507,7 +444,7 @@ event_pre_syscall(void *drcontext, int sysnum)
 	return true;
 }
 
-int check_alloc(unsigned long addr, int size)
+static int check_alloc(unsigned long addr, int size)
 {
 	int i, ct = 0;
 	char wh;
@@ -631,111 +568,24 @@ event_post_syscall(void *drcontext, int sysnum)
 	}
 }
 
-static void print_space()
+
+/*
+ * Utility functions
+ */
+
+static void percentify(unsigned long a, unsigned long b, char *transformed)
 {
+	unsigned long c, d;
+
+	c = a * 100 / b;
+	d = (a * 10000 / b) % 100;
+
+	sprintf(transformed, "%ld.%0ld", c, d);
 }
 
-static void read_map()
+static void
+clean_call(void)
 {
-	int i;
-	int buff_size;
-	int read_size = 32;
-	int made_line;
-	int prev_line_size;
-	FILE *proc_map;
-	char buff[10];
-	char name[20] = "/proc/";
-	char line[256];
-	char prev_line[256];
-	char temp_line[256];
-	struct rlimit limit;
-	struct rlimit rl;
-	struct rlimit rl2;
-
-	pid = getpid();
-	sprintf(buff, "%d", pid);
-	strncpy(name + 6, buff, strlen(buff));
-	strcat(name, "/maps");
-	
-	proc_map = fopen(name, "r");
-
-	getrlimit(RLIMIT_STACK, &limit);
-
-	global_range.lower = 0x8048000;
-	global_range.lower_addr = (void *)global_range.lower;
-	buff_size = fread(line, 1, read_size, proc_map);
-	prev_line_size = 0;
-
-	made_line = 0;
-
-	for (i = buff_size - 1; i >= 0; i--)
-		if (line[i] == '\n') {
-			strncpy(prev_line + prev_line_size, line, i);
-			prev_line[prev_line_size + i] = '\x0';
-			made_line = 1;
-			break;
-		}
-		else if (i == 0) {
-			strncpy(prev_line, line, buff_size);
-			prev_line_size = buff_size;
-			prev_line[buff_size] = '\x0';
-			made_line = 0;
-		}
-
-	while (buff_size == read_size) {
-		buff_size = fread(line, 1, read_size, proc_map);
-	//	buff_size = fgets(line, read_size, proc_map);
-
-		for (i = buff_size - 1; i >= 0; i--)
-			if (line[i] == '\n') {
-				strncpy(prev_line + prev_line_size, line, i);
-				prev_line[prev_line_size + i] = '\x0';
-				prev_line_size += i;
-				
-				if (!strncmp(prev_line + prev_line_size - strlen(STACK), STACK, strlen(STACK))) {
-
-					sscanf(prev_line, "%x-%x", (unsigned int *)&stack_range.lower, (unsigned int *)&stack_range.upper);
-//					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
-
-					getrlimit(RLIMIT_STACK, &rl);
-					getrlimit(RLIMIT_DATA, &rl2);
-					stack_range.lower = stack_range.upper - rl.rlim_cur;
-
-					stack_range.lower_addr = (void *)stack_range.lower;
-					stack_range.upper_addr = (void *)stack_range.upper;
-
-//					heap_range.upper = stack_range.lower;
-//					heap_range.upper_addr  = (void *)heap_range.upper;
-
-//					dr_fprintf(STDERR, "stack %x %x\n", stack_range.lower, stack_range.upper);
-				}
-				strcpy(temp_line, prev_line);
-				i++;
-				strncpy(prev_line, line + i, buff_size - i);
-				prev_line_size = buff_size - i;
-
-				break;
-			}
-			else if (i == 0) {
-				strncpy(prev_line + prev_line_size, line, buff_size);
-				prev_line_size += buff_size;
-				prev_line[prev_line_size] = '\x0';
-				made_line = 0;
-			}
-	}
-
-	fclose(proc_map);
+    void *drcontext = dr_get_current_drcontext();
+    memtrace(drcontext);
 }
-
-static void reserve_shadow_map()
-{
-	void *protect_addr;
-	
-	offset = (unsigned long) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-	protect_addr = (void *)((offset >> 3) + offset);
-	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
-		dr_fprintf(STDERR, "Shadow Memory Protection Error\n");
-	}
-}
-
