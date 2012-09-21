@@ -28,12 +28,14 @@
  */
 #define MEM_BUF_SIZE (sizeof(mem_ref_t) * MAX_NUM_MEM_REFS)
 
-/*
- * more defines
- */
+/* more defines */
 #define BUFSZ 8192
 #define MODUL 8191
 
+
+/* 
+ * Types 
+ */
 
 /*
  * Each mem_ref_t includes the type of reference (read or write), the address
@@ -46,9 +48,7 @@ typedef struct _mem_ref_t{
 } mem_ref_t;
 
 
-/*
- * range struct
- */
+/* range type */
 typedef struct range {
 	unsigned long lower;
 	unsigned long upper;
@@ -61,7 +61,6 @@ typedef struct range {
 /* thread private log file and counter */
 typedef struct {
 	int param[2];
-
     char   *buf_ptr;
     char   *buf_base;
     /* buf_end holds the negative value of real address of buffer end. */
@@ -70,40 +69,16 @@ typedef struct {
     uint64  num_refs;
 } per_thread_t;
 
+/* counter for read/write access */
 typedef struct access_count {
 	unsigned long read;
 	unsigned long write;
 } access_count_t;
 
-access_count_t stack_count;
-access_count_t other_count;
-access_count_t heap_count;
-access_count_t global_count;
-access_count_t heap_success;
-access_count_t heap_fail;
 
-struct range heap_range;
-struct range stack_range;
-struct range global_range;
-
-unsigned long syscall_param;
-
-static app_pc code_cache;
-
-
-static client_id_t client_id;
-static app_pc code_cache;
-static void  *mutex;    /* for multithread support */
-static uint64 num_refs; /* keep a global memory reference count */
-static int tls_index;
-
-unsigned long offset = 0x20000000;;
-static const unsigned long shadowMemSize = 1024 * 1024 * 128 * 3;
-pid_t pid;
-
-static void read_map();
-static void print_space();
-static void reserve_shadow_map();
+/* 
+ * Function definitions
+ */
 
 static void event_exit(void);
 static void event_thread_init(void *drcontext);

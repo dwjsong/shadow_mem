@@ -13,10 +13,11 @@
 #include <signal.h>
 #include <syscall.h>
 
+#include "shadow_map.h"
 #include "memtrace2.h"
 
 /*
- * Globals
+ * Global variables
  */
 
 /* counters */
@@ -27,17 +28,16 @@ static access_count_t global_count;
 static access_count_t heap_success;
 static access_count_t heap_fail;
 
-/* ranges */
-static range_t heap_range;
-static range_t stack_range;
-static range_t global_range;
-
 /* DR variables */
-unsigned long syscall_param;
+static unsigned long syscall_param;
 static app_pc code_cache;
 static client_id_t client_id;
 static app_pc code_cache;
+
+#ifdef __MUTEX__
 static void  *mutex;    /* for multithread support */
+#endif
+
 static uint64 num_refs; /* keep a global memory reference count */
 static int tls_index;
 
@@ -50,197 +50,156 @@ pid_t pid;
 void *addr_buf[BUFSZ];
 int buf_pos;
 
-DR_EXPORT void 
+DR_EXPORT void
 dr_init(client_id_t id)
 {
-	reserve_shadow_map();
-	read_map();
-	print_space();
-    /* Specify priority relative to other instrumentation operations: */
-    drmgr_priority_t priority = {
-        sizeof(priority), /* size of struct */
-        "memtrace",       /* name of our operation */
-        NULL,             /* optional name of operation we should precede */
-        NULL,             /* optional name of operation we should follow */
-        0};               /* numeric priority */
-    drmgr_init();
-    drutil_init();
-    client_id = id;
-    mutex = dr_mutex_create();
-    dr_register_exit_event(event_exit);
-    if (!drmgr_register_thread_init_event(event_thread_init) ||
-        !drmgr_register_thread_exit_event(event_thread_exit) ||
-        !drmgr_register_bb_app2app_event(event_bb_app2app,
-                                         &priority) ||
-        !drmgr_register_bb_instrumentation_event(event_bb_analysis,
-                                                 event_bb_insert,
-                                                 &priority)) {
-        /* something is wrong: can't continue */
-        DR_ASSERT(false);
-        return;
-    }
-    drmgr_register_pre_syscall_event(event_pre_syscall);
-	dr_register_post_syscall_event(event_post_syscall);
-    tls_index = drmgr_register_tls_field();
-    DR_ASSERT(tls_index != -1);
+  /* init. shadow_map */
+  reserve_shadow_map();
+  read_map();
+  print_space();
 
-    code_cache_init();
-    /* make it easy to tell, by looking at log file, which client executed */
-//    dr_log(NULL, LOG_ALL, 1, "Client 'memtrace' initializing\n");
+  /* Specify priority relative to other instrumentation operations: */
+  drmgr_priority_t priority = {
+    sizeof(priority), /* size of struct */
+    "memtrace",       /* name of our operation */
+    NULL,             /* optional name of operation we should precede */
+    NULL,             /* optional name of operation we should follow */
+    0};               /* numeric priority */
+
+  /* init. extensions */
+  drmgr_init();
+  drutil_init();
+
+  client_id = id;
+
+#ifdef __MUTEX__
+  mutex = dr_mutex_create();
+#endif
+
+  /* registering events */
+  if (!dr_register_exit_event(event_exit) ||
+      !drmgr_register_thread_init_event(event_thread_init) ||
+      !drmgr_register_thread_exit_event(event_thread_exit) ||
+      /* 1st stage */
+      !drmgr_register_bb_app2app_event(event_bb_app2app, &priority) ||
+      /* 2nd and 3rd stage */
+      !drmgr_register_bb_instrumentation_event(event_bb_analysis,
+                                               event_bb_insert, &priority)||
+      !drmgr_register_pre_syscall_event(event_pre_syscall) ||
+      !dr_register_post_syscall_event(event_post_syscall)
+    ) {
+    /* something is wrong: can't continue */
+    DR_ASSERT(false);
+    return;
+  }
+
+  tls_index = drmgr_register_tls_field();
+  DR_ASSERT(tls_index != -1);
+
+  code_cache_init();
 #ifdef SHOW_RESULTS
-    if (dr_is_notify_on()) {
-# ifdef WINDOWS
-        /* ask for best-effort printing to cmd window.  must be called in dr_init(). */
-        dr_enable_console_printing();
-# endif
-        dr_fprintf(STDERR, "Client memtrace is running\n");
-    }
+  if (dr_is_notify_on()) {
+    dr_fprintf(STDERR, "Client memtrace is running\n");
+  }
 #endif
 }
 
 
 static void percentify(unsigned long a, unsigned long b, char *transformed)
 {
-	unsigned long c, d;
+  unsigned long c, d;
 
-	if (!b)
-		sprintf(transformed, "0.0");
-	else {
-		c = a * 100 / b;
-		d = (a * 10000 / b) % 100;
+  if (!b)
+    sprintf(transformed, "0.0");
+  else {
+    c = a * 100 / b;
+    d = (a * 10000 / b) % 100;
 
-		sprintf(transformed, "%lu.%0lu", c, d);
-	}
+    sprintf(transformed, "%lu.%0lu", c, d);
+  }
 }
 
 static void
 event_exit()
 {
 #ifdef SHOW_RESULTS
-    char msg[512];
-	char tmp[10];
-//    int len;
-	unsigned long read_total = stack_count.read + heap_count.read + global_count.read + other_count.read;
-	unsigned long write_total = stack_count.write + heap_count.write + global_count.write + other_count.write;
+  char msg[512];
+  char tmp[10];
 
-	dr_printf("heap %x %x\n", heap_range.lower_addr, heap_range.upper_addr);
-	dr_printf("stack %x %x\n", stack_range.lower_addr, stack_range.upper_addr);
-	dr_printf("global %x %x\n", global_range.lower_addr, global_range.upper_addr);
-	dr_printf("read %d %d\n", global_range.lower_addr, global_range.upper_addr);
+  unsigned long read_total = stack_count.read + heap_count.read + \
+    global_count.read + other_count.read;
+  unsigned long write_total = stack_count.write + heap_count.write + \
+    global_count.write + other_count.write;
 
-	dr_printf("==============================\n");
-	dr_printf("Read \n");
-	dr_printf("Stack : %lu ", stack_count.read);
-	percentify(stack_count.read, read_total, tmp);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("Heap  : %lu ", heap_count.read);
-	percentify(heap_count.read, read_total, tmp);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("	Success : %lu\n", heap_success.read);
-	dr_printf("	Fail : %lu\n", heap_fail.read);
-	percentify(global_count.read, read_total, tmp);
-	dr_printf("Global : %lu ", global_count.read);
-	dr_printf("(%s)\n", tmp);
-	percentify(other_count.read, read_total, tmp);
-	dr_printf("Other : %lu ", other_count.read);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("Total : %lu\n", read_total);
-	dr_printf("==============================\n");
+  dr_printf("heap %x %x\n", heap_range.lower_addr, heap_range.upper_addr);
+  dr_printf("stack %x %x\n", stack_range.lower_addr, stack_range.upper_addr);
+  dr_printf("global %x %x\n", global_range.lower_addr, global_range.upper_addr);
+  dr_printf("read %d %d\n", global_range.lower_addr, global_range.upper_addr);
 
-	dr_printf("Write \n");
-	dr_printf("Stack : %lu ", stack_count.write);
-	percentify(stack_count.write, write_total, tmp);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("Heap  : %lu ", heap_count.write);
-	percentify(heap_count.write , write_total, tmp);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("	Success : %lu\n", heap_success.write);
-	dr_printf("	Fail : %lu\n", heap_fail.write);
-	percentify(global_count.write, write_total, tmp);
-	dr_printf("Global : %lu ", global_count.write);
-	dr_printf("(%s)\n", tmp);
-	percentify(other_count.write, write_total, tmp);
-	dr_printf("Other : %lu ", other_count.write);
-	dr_printf("(%s)\n", tmp);
-	dr_printf("Total : %lu\n", write_total);
-	dr_printf("==============================\n");
+  dr_printf("==============================\n");
+  dr_printf("Read \n");
+  dr_printf("Stack : %lu ", stack_count.read);
+  percentify(stack_count.read, read_total, tmp);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("Heap  : %lu ", heap_count.read);
+  percentify(heap_count.read, read_total, tmp);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("	Success : %lu\n", heap_success.read);
+  dr_printf("	Fail : %lu\n", heap_fail.read);
+  percentify(global_count.read, read_total, tmp);
+  dr_printf("Global : %lu ", global_count.read);
+  dr_printf("(%s)\n", tmp);
+  percentify(other_count.read, read_total, tmp);
+  dr_printf("Other : %lu ", other_count.read);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("Total : %lu\n", read_total);
+  dr_printf("==============================\n");
+  
+  dr_printf("Write \n");
+  dr_printf("Stack : %lu ", stack_count.write);
+  percentify(stack_count.write, write_total, tmp);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("Heap  : %lu ", heap_count.write);
+  percentify(heap_count.write , write_total, tmp);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("	Success : %lu\n", heap_success.write);
+  dr_printf("	Fail : %lu\n", heap_fail.write);
+  percentify(global_count.write, write_total, tmp);
+  dr_printf("Global : %lu ", global_count.write);
+  dr_printf("(%s)\n", tmp);
+  percentify(other_count.write, write_total, tmp);
+  dr_printf("Other : %lu ", other_count.write);
+  dr_printf("(%s)\n", tmp);
+  dr_printf("Total : %lu\n", write_total);
+  dr_printf("==============================\n");
 
-/*
-    len = dr_snprintf(msg, sizeof(msg)/sizeof(msg[0]),
-                      "load  %llu\n"
-                      "store %llu\n",
-                      load_count, store_count);
-					  */
-					  /*
-    dr_snprintf(msg, sizeof(msg)/sizeof(msg[0]), "load  %lu\n", load_count);
-    dr_snprintf(msg, sizeof(msg)/sizeof(msg[0]), "store %lu\n", store_count);
-	*/
-
-/*
-	dr_fprintf(STDERR, "load %lu\n", load_count);
-	dr_fprintf(STDERR, "store %lu\n", store_count);
-	*/
-
-//    DR_ASSERT(len > 0);
-    NULL_TERMINATE(msg);
-    DISPLAY_STRING(msg);
+  NULL_TERMINATE(msg);
+  DISPLAY_STRING(msg);
 #endif /* SHOW_RESULTS */
-    code_cache_exit();
-    drmgr_unregister_tls_field(tls_index);
-    dr_mutex_destroy(mutex);
-    drutil_exit();
-    drmgr_exit();
+  code_cache_exit();
+  drmgr_unregister_tls_field(tls_index);
+
+#ifdef __MUTEX__
+  dr_mutex_destroy(mutex);
+#endif
+
+  drutil_exit();
+  drmgr_exit();
 }
 
-#ifdef WINDOWS
-# define IF_WINDOWS(x) x
-#else
-# define IF_WINDOWS(x) /* nothing */
-#endif
-
-static void 
+static void
 event_thread_init(void *drcontext)
 {
-    per_thread_t *data;
+  per_thread_t *data;
 
-    /* allocate thread private data */
-    data = dr_thread_alloc(drcontext, sizeof(per_thread_t));
-    drmgr_set_tls_field(drcontext, tls_index, data);
-    data->buf_base = dr_thread_alloc(drcontext, MEM_BUF_SIZE);
-    data->buf_ptr  = data->buf_base;
-    /* set buf_end to be negative of address of buffer end for the lea later */
-    data->buf_end  = -(ptr_int_t)(data->buf_base + MEM_BUF_SIZE);
-    data->num_refs = 0;
-
-    /* We're going to dump our data to a per-thread file.
-     * On Windows we need an absolute path so we place it in
-     * the same directory as our library. We could also pass
-     * in a path and retrieve with dr_get_options().
-     */
-	 /*
-    len = dr_snprintf(logname, sizeof(logname)/sizeof(logname[0]),
-                      "%s", dr_get_client_path(client_id));
-    DR_ASSERT(len > 0);
-    for (dirsep = logname + len; *dirsep != '/' IF_WINDOWS(&& *dirsep != '\\'); dirsep--)
-        DR_ASSERT(dirsep > logname);
-    len = dr_snprintf(dirsep + 1,
-                      (sizeof(logname) - (dirsep - logname))/sizeof(logname[0]),
-                      "memtrace.%d.log", dr_get_thread_id(drcontext));
-    DR_ASSERT(len > 0);
-    NULL_TERMINATE(logname);
-    data->log = dr_open_file(logname, 
-                             DR_FILE_WRITE_OVERWRITE | DR_FILE_ALLOW_LARGE);
-    DR_ASSERT(data->log != INVALID_FILE);
-    dr_log(drcontext, LOG_ALL, 1, 
-           "memtrace: log for thread %d is memtrace.%03d\n",
-           dr_get_thread_id(drcontext), dr_get_thread_id(drcontext));
-#ifdef SHOW_RESULTS
-    if (dr_is_notify_on()) {
-        dr_fprintf(STDERR, "<memtrace results for thread %d in %s>\n",
-                   dr_get_thread_id(drcontext), logname);
-    }
-#endif
-*/
+  /* allocate thread private data */
+  data = dr_thread_alloc(drcontext, sizeof(per_thread_t));
+  drmgr_set_tls_field(drcontext, tls_index, data);
+  data->buf_base = dr_thread_alloc(drcontext, MEM_BUF_SIZE);
+  data->buf_ptr  = data->buf_base;
+  /* set buf_end to be negative of address of buffer end for the lea later */
+  data->buf_end  = -(ptr_int_t)(data->buf_base + MEM_BUF_SIZE);
+  data->num_refs = 0;
 }
 
 
@@ -251,17 +210,26 @@ event_thread_exit(void *drcontext)
 
     memtrace(drcontext);
     data = drmgr_get_tls_field(drcontext, tls_index);
+
+#ifdef __MUTEX__
     dr_mutex_lock(mutex);
+#endif __MUTEX__
+
     num_refs += data->num_refs;
+
+#ifdef __MUTEX__
     dr_mutex_unlock(mutex);
+#endif
+
 //    dr_close_file(data->log);
     dr_thread_free(drcontext, data->buf_base, MEM_BUF_SIZE);
     dr_thread_free(drcontext, data, sizeof(per_thread_t));
 }
 
 
-/* we transform string loops into regular loops so we can more easily
- * monitor every memory reference they make
+/*
+ * we transform string loops into regular loops so we can more easily monitor
+ * every memory reference they make
  */
 static dr_emit_flags_t
 event_bb_app2app(void *drcontext, void *tag, instrlist_t *bb,
@@ -274,8 +242,9 @@ event_bb_app2app(void *drcontext, void *tag, instrlist_t *bb,
     return DR_EMIT_DEFAULT;
 }
 
-/* our operations here only need to see a single-instruction window so
- * we do not need to do any whole-bb analysis
+/*
+ * our operations here only need to see a single-instruction window so we do not
+ * need to do any whole-bb analysis
  */
 static dr_emit_flags_t
 event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb,
@@ -285,8 +254,9 @@ event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb,
     return DR_EMIT_DEFAULT;
 }
 
-/* event_bb_insert calls instrument_mem to instrument every
- * application memory reference.
+/*
+ * event_bb_insert calls instrument_mem to instrument every application memory
+ * reference.
  */
 static dr_emit_flags_t
 event_bb_insert(void *drcontext, void *tag, instrlist_t *bb,
@@ -349,7 +319,7 @@ int markAlloc(unsigned long addr, int size)
 		//bit-position
 		wh = (addr + i) & 7;
 
-		//marking 
+		//marking
 		*shadow_addr = *shadow_addr | (1 << wh);
 		/*
 		if (i % 8 == 0)
@@ -405,7 +375,7 @@ static void trace_load(unsigned long addr, int size)
 	int count = 0;
 	unsigned long addr_val = (unsigned long) addr;
 
-	
+
 	addr_buf[buf_pos] = (void *)addr;
 	buf_pos++;
 	buf_pos = buf_pos & MODUL;
@@ -427,7 +397,7 @@ static void trace_load(unsigned long addr, int size)
 
 static void trace_store(unsigned long addr, int size)
 {
-	int count = 0; 
+	int count = 0;
 	unsigned long addr_val = (unsigned long) addr;
 
 	addr_buf[buf_pos] = (void *)addr;
@@ -455,7 +425,7 @@ static void trace_load(unsigned long addr, int size)
 	int count;
 	unsigned long addr_val = (unsigned long) addr;
 
-	
+
 //	dr_printf("r g %p h %p %p s %p %p a %p s %d\n", global_range.upper_addr, heap_range.lower_addr, heap_range.upper_addr, stack_range.lower_addr, stack_range.upper_addr, (void *)addr, size);
 	addr_buf[buf_pos] = (void *)addr;
 	buf_pos++;
@@ -479,7 +449,7 @@ static void trace_load(unsigned long addr, int size)
 
 static void trace_store(unsigned long addr, int size)
 {
-	int count; 
+	int count;
 	unsigned long addr_val = (unsigned long) addr;
 
 	addr_buf[buf_pos] = (void *)addr;
@@ -558,7 +528,7 @@ code_cache_init(void)
     byte         *end;
 
     drcontext  = dr_get_current_drcontext();
-    code_cache = dr_nonheap_alloc(PAGE_SIZE, 
+    code_cache = dr_nonheap_alloc(PAGE_SIZE,
                                   DR_MEMPROT_READ  |
                                   DR_MEMPROT_WRITE |
                                   DR_MEMPROT_EXEC);
@@ -591,7 +561,7 @@ code_cache_exit(void)
  * and jump to our own code cache to call the clean_call when the buffer is full.
  */
 static void
-instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where, 
+instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
                int pos, bool write)
 {
     instr_t *instr, *call, *restore;
@@ -599,12 +569,12 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
     reg_id_t reg1 = DR_REG_XBX; /* We can optimize it by picking dead reg */
     reg_id_t reg2 = DR_REG_XCX; /* reg2 must be ECX or RCX for jecxz */
     per_thread_t *data;
-    
+
     data = drmgr_get_tls_field(drcontext, tls_index);
 
     /* Steal the register for memory reference address *
-     * We can optimize away the unnecessary register save and restore 
-     * by analyzing the code and finding the register is dead. 
+     * We can optimize away the unnecessary register save and restore
+     * by analyzing the code and finding the register is dead.
      */
     dr_save_reg(drcontext, ilist, where, reg1, SPILL_SLOT_2);
     dr_save_reg(drcontext, ilist, where, reg2, SPILL_SLOT_3);
@@ -616,13 +586,13 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
 
     /* use drutil to get mem address */
     drutil_insert_get_mem_addr(drcontext, ilist, where, ref, reg1, reg2);
-    
+
     /* The following assembly performs the following instructions
      * buf_ptr->write = write;
      * buf_ptr->addr  = addr;
      * buf_ptr->size  = size;
      * buf_ptr++;
-     * if (buf_ptr >= buf_end_ptr) 
+     * if (buf_ptr >= buf_end_ptr)
      *    clean_call();
      */
     drmgr_insert_read_tls_field(drcontext, tls_index, ilist, where, reg2);
@@ -653,8 +623,8 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
 
     /* Increment reg value by pointer size using lea instr */
     opnd1 = opnd_create_reg(reg2);
-    opnd2 = opnd_create_base_disp(reg2, DR_REG_NULL, 0, 
-                                  sizeof(mem_ref_t), 
+    opnd2 = opnd_create_base_disp(reg2, DR_REG_NULL, 0,
+                                  sizeof(mem_ref_t),
                                   OPSZ_lea);
     instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
@@ -668,7 +638,7 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
 
     /* we use lea + jecxz trick for better performance
      * lea and jecxz won't disturb the eflags, so we won't insert
-     * code to save and restore application's eflags. 
+     * code to save and restore application's eflags.
      */
     /* lea [reg2 - buf_end] => reg2 */
     opnd1 = opnd_create_reg(reg1);
@@ -679,7 +649,7 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
     opnd2 = opnd_create_base_disp(reg1, reg2, 1, 0, OPSZ_lea);
     instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
-    
+
     /* jecxz call */
     call  = INSTR_CREATE_label(drcontext);
     opnd1 = opnd_create_instr(call);
@@ -693,8 +663,8 @@ instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where,
     instrlist_meta_preinsert(ilist, where, instr);
 
     /* clean call */
-    /* We jump to lean procedure which performs full context switch and 
-     * clean call invocation. This is to reduce the code cache size. 
+    /* We jump to lean procedure which performs full context switch and
+     * clean call invocation. This is to reduce the code cache size.
      */
     instrlist_meta_preinsert(ilist, where, call);
     /* mov restore DR_REG_XCX */
@@ -722,7 +692,7 @@ event_pre_syscall(void *drcontext, int sysnum)
 	//dr_fprintf(STDERR, "pre sysnum %d\n", sysnum);
 
 	switch (sysnum) {
-	
+
 		case BRK_SYSCALL :
 			data->param[0] = dr_syscall_get_param(drcontext, 0);
 //			dr_fprintf(STDERR, "	brk %u\n", nm);
@@ -790,114 +760,6 @@ event_post_syscall(void *drcontext, int sysnum)
 			unmarkAlloc(data->param[0], data->param[1]);
 
 			break;
-	}
-}
-
-static void print_space()
-{
-}
-
-static void read_map()
-{
-	int i;
-	int buff_size;
-	int read_size = 32;
-	int made_line;
-	int prev_line_size;
-	FILE *proc_map;
-	char buff[10];
-	char name[20] = "/proc/";
-	char line[256];
-	char prev_line[256];
-	char temp_line[256];
-	struct rlimit limit;
-	struct rlimit rl;
-	struct rlimit rl2;
-
-	pid = getpid();
-	sprintf(buff, "%d", pid);
-	strncpy(name + 6, buff, strlen(buff));
-	strcat(name, "/maps");
-	
-	proc_map = fopen(name, "r");
-
-	getrlimit(RLIMIT_STACK, &limit);
-
-	global_range.lower = 0x8048000;
-	global_range.lower_addr = (void *)global_range.lower;
-	buff_size = fread(line, 1, read_size, proc_map);
-	prev_line_size = 0;
-
-	made_line = 0;
-
-	for (i = buff_size - 1; i >= 0; i--)
-		if (line[i] == '\n') {
-			strncpy(prev_line + prev_line_size, line, i);
-			prev_line[prev_line_size + i] = '\x0';
-			made_line = 1;
-			break;
-		}
-		else if (i == 0) {
-			strncpy(prev_line, line, buff_size);
-			prev_line_size = buff_size;
-			prev_line[buff_size] = '\x0';
-			made_line = 0;
-		}
-
-	while (buff_size == read_size) {
-		buff_size = fread(line, 1, read_size, proc_map);
-	//	buff_size = fgets(line, read_size, proc_map);
-
-		for (i = buff_size - 1; i >= 0; i--)
-			if (line[i] == '\n') {
-				strncpy(prev_line + prev_line_size, line, i);
-				prev_line[prev_line_size + i] = '\x0';
-				prev_line_size += i;
-				
-				if (!strncmp(prev_line + prev_line_size - strlen(STACK), STACK, strlen(STACK))) {
-
-					sscanf(prev_line, "%x-%x", (unsigned int *)&stack_range.lower, (unsigned int *)&stack_range.upper);
-//					stack_range.upper = VG_(strtoull16)(temp_s2, NULL);
-
-					getrlimit(RLIMIT_STACK, &rl);
-					getrlimit(RLIMIT_DATA, &rl2);
-					stack_range.lower = stack_range.upper - rl.rlim_cur;
-
-					stack_range.lower_addr = (void *)stack_range.lower;
-					stack_range.upper_addr = (void *)stack_range.upper;
-
-//					heap_range.upper = stack_range.lower;
-//					heap_range.upper_addr  = (void *)heap_range.upper;
-
-//					dr_fprintf(STDERR, "stack %x %x\n", stack_range.lower, stack_range.upper);
-				}
-				strcpy(temp_line, prev_line);
-				i++;
-				strncpy(prev_line, line + i, buff_size - i);
-				prev_line_size = buff_size - i;
-
-				break;
-			}
-			else if (i == 0) {
-				strncpy(prev_line + prev_line_size, line, buff_size);
-				prev_line_size += buff_size;
-				prev_line[prev_line_size] = '\x0';
-				made_line = 0;
-			}
-	}
-
-	fclose(proc_map);
-}
-
-static void reserve_shadow_map()
-{
-	void *protect_addr;
-	
-	offset = (unsigned long) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-	protect_addr = (void *)((offset >> 3) + offset);
-	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
-		dr_fprintf(STDERR, "Shadow Memory Protection Error\n");
 	}
 }
 

@@ -1,6 +1,22 @@
 #include "shadow_map.h"
 
-void read_map()
+void reserve_shadow_map()
+{
+	void *protect_addr;
+	
+	offset = (unsigned long) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	protect_addr = (void *)((offset >> 3) + offset);
+	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
+		dr_fprintf(STDERR, "Shadow Memory Protection Error\n");
+	}
+}
+
+static void print_space()
+{
+}
+
+static void read_map()
 {
 	int i;
 	int buff_size;
@@ -90,21 +106,4 @@ void read_map()
 	}
 
 	fclose(proc_map);
-}
-
-
-void print_space()
-{
-}
-
-void reserve_shadow_map()
-{
-	void *protect_addr;
-	
-	offset = (unsigned long) mmap((void *)offset, shadowMemSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-	protect_addr = (void *)((offset >> 3) + offset);
-	if (mprotect(protect_addr, shadowMemSize / 8, PROT_NONE) < 0) {
-		dr_fprintf(STDERR, "Shadow Memory Protection Error\n");
-	}
 }
