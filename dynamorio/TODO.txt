@@ -1,0 +1,17 @@
+==Things to clarify ==
+
+Q1: what is the DR extensions such as 'drmgr' and ''drutil'?
+
+Q2: Must be clear about instrumentation stages of DynamoRIO.
+ - They have 4 of them
+   1. App-2-app translation
+   2. ...
+   3. ...
+   4. ...
+
+Q3: what is the meta conditional branch?
+
+Q4: Still not clear about 'event_bb_insert' function. It only seems like to add
+a single instrumentation per basic block.
+
+Q5: how can we pickup 'dead' registers?
