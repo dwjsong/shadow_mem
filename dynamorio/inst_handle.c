@@ -200,122 +200,102 @@ static void
 instrument_mem(void *drcontext, instrlist_t *ilist, instr_t *where, 
                int pos, bool write)
 {
-    instr_t *instr, *call, *restore;
+//    instr_t *instr, *call, *restore;
+    instr_t *instr;
     opnd_t   ref, opnd1, opnd2;
-    reg_id_t reg1 = DR_REG_XBX; /* We can optimize it by picking dead reg */
+    reg_id_t reg1 = DR_REG_XAX; /* We can optimize it by picking dead reg */
     reg_id_t reg2 = DR_REG_XCX; /* reg2 must be ECX or RCX for jecxz */
-    per_thread_t *data;
-    
-    data = drmgr_get_tls_field(drcontext, tls_index);
+
+//	uint flags, dead;
 
     /* Steal the register for memory reference address *
      * We can optimize away the unnecessary register save and restore 
      * by analyzing the code and finding the register is dead. 
      */
-    dr_save_reg(drcontext, ilist, where, reg1, SPILL_SLOT_2);
-    dr_save_reg(drcontext, ilist, where, reg2, SPILL_SLOT_3);
 
     if (write)
        ref = instr_get_dst(where, pos);
     else
        ref = instr_get_src(where, pos);
 
-    /* use drutil to get mem address */
-    drutil_insert_get_mem_addr(drcontext, ilist, where, ref, reg1, reg2);
-    
-    /* The following assembly performs the following instructions
-     * buf_ptr->write = write;
-     * buf_ptr->addr  = addr;
-     * buf_ptr->size  = size;
-     * buf_ptr++;
-     * if (buf_ptr >= buf_end_ptr) 
-     *    clean_call();
-     */
-    drmgr_insert_read_tls_field(drcontext, tls_index, ilist, where, reg2);
-    /* Load data->buf_ptr into reg2 */
+
+    dr_save_reg(drcontext, ilist, where, reg1, SPILL_SLOT_2);
+    dr_save_reg(drcontext, ilist, where, reg2, SPILL_SLOT_3);
+
+
+///*
+	// reg2 = buf_pos
     opnd1 = opnd_create_reg(reg2);
-    opnd2 = OPND_CREATE_MEMPTR(reg2, offsetof(per_thread_t, buf_ptr));
+    opnd2 = OPND_CREATE_ABSMEM((byte *)&buf_pos, OPSZ_4);
     instr = INSTR_CREATE_mov_ld(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* Move write/read to write field */
-    opnd1 = OPND_CREATE_MEM32(reg2, offsetof(mem_ref_t, write));
-    opnd2 = OPND_CREATE_INT32(write);
+	// reg1 = &buffer
+    opnd1 = opnd_create_reg(reg1);
+    opnd2 = OPND_CREATE_INTPTR(buffer);
     instr = INSTR_CREATE_mov_imm(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* Store address in memory ref */
-    opnd1 = OPND_CREATE_MEMPTR(reg2, offsetof(mem_ref_t, addr));
-    opnd2 = opnd_create_reg(reg1);
+	// reg1 = reg1 + reg2 * sizeof(mem_ref_t)
+	// 		= buffer + buf_pos * sizeof(mem_ref_t)
+	// 		= buffer[buf_pos]
+    opnd1 = opnd_create_reg(reg1);
+    opnd2 = opnd_create_base_disp(reg1, reg2, sizeof(mem_ref_t), 0, OPSZ_lea);
+    instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
+    instrlist_meta_preinsert(ilist, where, instr);
+
+	// buffer[buf_pos].write = write
+    opnd1 = OPND_CREATE_MEMPTR(reg1, offsetof(mem_ref_t, write));
+    opnd2 = OPND_CREATE_INT32(write);
     instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* Store size in memory ref */
-    opnd1 = OPND_CREATE_MEMPTR(reg2, offsetof(mem_ref_t, size));
-    /* drutil_opnd_mem_size_in_bytes handles OP_enter */
+	// buffer[buf_pos].size = mem_size 
+    opnd1 = OPND_CREATE_MEMPTR(reg1, offsetof(mem_ref_t, size));
     opnd2 = OPND_CREATE_INT32(drutil_opnd_mem_size_in_bytes(ref, where));
     instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* Increment reg value by pointer size using lea instr */
-    opnd1 = opnd_create_reg(reg2);
-    opnd2 = opnd_create_base_disp(reg2, DR_REG_NULL, 0, 
-                                  sizeof(mem_ref_t), 
-                                  OPSZ_lea);
-    instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
+	// buffer[buf_pos].addr = addr;
+    opnd1 = OPND_CREATE_MEMPTR(reg1, offsetof(mem_ref_t, addr));
+    drutil_insert_get_mem_addr(drcontext, ilist, where, ref, reg2, reg1);
+    opnd2 = opnd_create_reg(reg2);
+    instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
+    instrlist_meta_preinsert(ilist, where, instr);
+/*	
+    opnd1 = OPND_CREATE_ABSMEM((byte *)&buf_pos, OPSZ_4);
+    instr = INSTR_CREATE_inc(drcontext, opnd1);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* Update the data->buf_ptr */
-    drmgr_insert_read_tls_field(drcontext, tls_index, ilist, where, reg1);
-    opnd1 = OPND_CREATE_MEMPTR(reg1, offsetof(per_thread_t, buf_ptr));
+    opnd1 = OPND_CREATE_ABSMEM((byte *)&buf_pos, OPSZ_4);
+    opnd2 = OPND_CREATE_INT32(0x00001fff);
+    instr = INSTR_CREATE_and(drcontext, opnd1, opnd2);
+    instrlist_meta_preinsert(ilist, where, instr);
+	*/
+
+	dr_save_arith_flags_to_xax(drcontext, ilist, where);	
+
+    opnd1 = opnd_create_reg(reg2);
+    opnd2 = OPND_CREATE_ABSMEM((byte *)&buf_pos, OPSZ_4);
+    instr = INSTR_CREATE_mov_ld(drcontext, opnd1, opnd2);
+    instrlist_meta_preinsert(ilist, where, instr);
+
+    opnd1 = opnd_create_reg(reg2);
+    instr = INSTR_CREATE_inc(drcontext, opnd1);
+    instrlist_meta_preinsert(ilist, where, instr);
+
+    opnd1 = opnd_create_reg(reg2);
+    opnd2 = OPND_CREATE_INT32(0x00001fff);
+    instr = INSTR_CREATE_and(drcontext, opnd1, opnd2);
+    instrlist_meta_preinsert(ilist, where, instr);
+
+    opnd1 = OPND_CREATE_ABSMEM((byte *)&buf_pos, OPSZ_4);
     opnd2 = opnd_create_reg(reg2);
     instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
     instrlist_meta_preinsert(ilist, where, instr);
 
-    /* we use lea + jecxz trick for better performance
-     * lea and jecxz won't disturb the eflags, so we won't insert
-     * code to save and restore application's eflags. 
-     */
-    /* lea [reg2 - buf_end] => reg2 */
-    opnd1 = opnd_create_reg(reg1);
-    opnd2 = OPND_CREATE_MEMPTR(reg1, offsetof(per_thread_t, buf_end));
-    instr = INSTR_CREATE_mov_ld(drcontext, opnd1, opnd2);
-    instrlist_meta_preinsert(ilist, where, instr);
-    opnd1 = opnd_create_reg(reg2);
-    opnd2 = opnd_create_base_disp(reg1, reg2, 1, 0, OPSZ_lea);
-    instr = INSTR_CREATE_lea(drcontext, opnd1, opnd2);
-    instrlist_meta_preinsert(ilist, where, instr);
-    
-    /* jecxz call */
-    call  = INSTR_CREATE_label(drcontext);
-    opnd1 = opnd_create_instr(call);
-    instr = INSTR_CREATE_jecxz(drcontext, opnd1);
-    instrlist_meta_preinsert(ilist, where, instr);
+	dr_restore_arith_flags_from_xax(drcontext, ilist, where);
 
-    /* jump restore to skip clean call */
-    restore = INSTR_CREATE_label(drcontext);
-    opnd1 = opnd_create_instr(restore);
-    instr = INSTR_CREATE_jmp(drcontext, opnd1);
-    instrlist_meta_preinsert(ilist, where, instr);
-
-    /* clean call */
-    /* We jump to lean procedure which performs full context switch and 
-     * clean call invocation. This is to reduce the code cache size. 
-     */
-    instrlist_meta_preinsert(ilist, where, call);
-    /* mov restore DR_REG_XCX */
-    opnd1 = opnd_create_reg(reg2);
-    /* this is the return address for jumping back from lean procedure */
-    opnd2 = opnd_create_instr(restore);
-    instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
-    instrlist_meta_preinsert(ilist, where, instr);
-    /* jmp code_cache */
-    opnd1 = opnd_create_pc(code_cache);
-    instr = INSTR_CREATE_jmp(drcontext, opnd1);
-    instrlist_meta_preinsert(ilist, where, instr);
-
-    /* restore %reg */
-    instrlist_meta_preinsert(ilist, where, restore);
     dr_restore_reg(drcontext, ilist, where, reg1, SPILL_SLOT_2);
     dr_restore_reg(drcontext, ilist, where, reg2, SPILL_SLOT_3);
 }
