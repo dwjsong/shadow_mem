@@ -42,41 +42,13 @@ VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
 
 VG_REGPARM(2) void trace_load2(Addr addr, SizeT size)
 {
-	Int count = 0;
 	ULong addr_val = (unsigned long) addr;
-	Int i;
-	Int ct = 0;
-	Char wh;
-	Addr idAddr;
-	UChar *t;
-	UChar data;
-	Int tt = 0;
 
-	buf[buf_pos].addr = addr;
-	buf[buf_pos].size = size;
-	buf[buf_pos].write = False;
-	buf_pos++;
-	buf_pos = buf_pos & MODUL;
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
 		heap_count.read += size;
-//		count = check_map(addr, size);
-
-		idAddr = ((addr) >> 3) + reserve_map;
-		t = idAddr;
-		data = *t;
-		for (i = 0; i < size; i++) {
-
-			wh = (addr + i) & 7;
-
-			tt  = ((data >> wh) & 1);
-
-			count += tt;
-		}
-		heap_success.read += count;
-		heap_fail.read += size - count;
 	}
 	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.read += size;
@@ -88,40 +60,13 @@ VG_REGPARM(2) void trace_load2(Addr addr, SizeT size)
 
 VG_REGPARM(2) void trace_store2(Addr addr, SizeT size)
 {
-	Int count = 0; 
 	ULong addr_val = (unsigned long) addr;
-	Int i;
-	Int ct = 0;
-	Char wh;
-	Addr idAddr;
-	UChar *t;
-	UChar data;
-	Int tt = 0;
 
-	buf[buf_pos].addr = addr;
-	buf[buf_pos].size = size;
-	buf[buf_pos].write = True;
-	buf_pos++;
-	buf_pos = buf_pos & MODUL;
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
 		heap_count.write += size;
-//		count = check_map(addr, size);
-		idAddr = ((addr) >> 3) + reserve_map;
-		t = idAddr;
-		data = *t;
-		for (i = 0; i < size; i++) {
-
-			wh = (addr + i) & 7;
-
-			tt  = ((data >> wh) & 1);
-
-			count += tt;
-		}
-		heap_success.write += count;
-		heap_fail.write += size - count;
 	}
 	else if (global_range.upper > addr_val && addr_val > global_range.lower) {
 		global_count.write += size;
@@ -133,20 +78,41 @@ VG_REGPARM(2) void trace_store2(Addr addr, SizeT size)
 
 VG_REGPARM(2) void trace_load3(Addr addr, SizeT size)
 {
-	Int count;
+	Int count = 0;
 	ULong addr_val = (unsigned long) addr;
+	Int i;
+	Int ct = 0;
+	Char wh;
+	Addr idAddr;
+	UChar *t;
+	UChar data;
+	Int tt = 0;
 
+/*
 	buf[buf_pos].addr = addr;
 	buf[buf_pos].size = size;
 	buf[buf_pos].write = False;
 	buf_pos++;
 	buf_pos = buf_pos & MODUL;
+	*/
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
 		heap_count.read += size;
-		count = check_map(addr, size);
+//		count = check_map(addr, size);
+
+		idAddr = ((addr) >> 3) + reserve_map;
+		t = idAddr;
+		data = *t;
+		for (i = 0; i < size; i++) {
+
+			wh = (addr + i) & 7;
+
+			tt  = ((data >> wh) & 1);
+
+			count += tt;
+		}
 		heap_success.read += count;
 		heap_fail.read += size - count;
 	}
@@ -160,20 +126,40 @@ VG_REGPARM(2) void trace_load3(Addr addr, SizeT size)
 
 VG_REGPARM(2) void trace_store3(Addr addr, SizeT size)
 {
-	Int count; 
+	Int count = 0; 
 	ULong addr_val = (unsigned long) addr;
+	Int i;
+	Int ct = 0;
+	Char wh;
+	Addr idAddr;
+	UChar *t;
+	UChar data;
+	Int tt = 0;
 
+/*
 	buf[buf_pos].addr = addr;
 	buf[buf_pos].size = size;
 	buf[buf_pos].write = True;
 	buf_pos++;
 	buf_pos = buf_pos & MODUL;
+	*/
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
 	}
 	else if (heap_range.upper > addr_val && addr_val > heap_range.lower) {
 		heap_count.write += size;
-		count = check_map(addr, size);
+//		count = check_map(addr, size);
+		idAddr = ((addr) >> 3) + reserve_map;
+		t = idAddr;
+		data = *t;
+		for (i = 0; i < size; i++) {
+
+			wh = (addr + i) & 7;
+
+			tt  = ((data >> wh) & 1);
+
+			count += tt;
+		}
 		heap_success.write += count;
 		heap_fail.write += size - count;
 	}
@@ -191,11 +177,13 @@ VG_REGPARM(2) void trace_load4(Addr addr, SizeT size)
 	Int count;
 	ULong addr_val = (unsigned long) addr;
 
+/*
 	buf[buf_pos].addr = addr;
 	buf[buf_pos].size = size;
 	buf[buf_pos].write = False;
 	buf_pos++;
 	buf_pos = buf_pos & MODUL;
+	*/
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.read += size;
 	}
@@ -218,11 +206,13 @@ VG_REGPARM(2) void trace_store4(Addr addr, SizeT size)
 	Int count; 
 	ULong addr_val = (unsigned long) addr;
 
+/*
 	buf[buf_pos].addr = addr;
 	buf[buf_pos].size = size;
 	buf[buf_pos].write = True;
 	buf_pos++;
 	buf_pos = buf_pos & MODUL;
+	*/
 	if (stack_range.upper > addr_val && addr_val > stack_range.lower) {
 		stack_count.write += size;
 	}
@@ -278,8 +268,8 @@ void flushEvents(IRSB* sb)
 
 void addLoadEvent(IRSB *sb, IRExpr* addr, Int size)
 {
-	Char*      helperName = "trace_load";
-	void*      helperAddr = trace_load;
+	Char*      helperName = "trace_load2";
+	void*      helperAddr = trace_load2;
 	IRExpr**   argv;
 	IRDirty*   di;
 
@@ -303,8 +293,8 @@ void addLoadEvent(IRSB *sb, IRExpr* addr, Int size)
 
 void addStoreEvent(IRSB *sb, IRExpr* addr, Int size)
 {
-	Char*      helperName = "trace_store";
-	void*      helperAddr = trace_store;
+	Char*      helperName = "trace_store2";
+	void*      helperAddr = trace_store2;
 	IRExpr**   argv;
 	IRDirty*   di;
 
